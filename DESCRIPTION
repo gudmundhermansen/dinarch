@@ -1,0 +1,25 @@
+Package: dinarch
+Title: Dynamic Innovation Negative Binomial ARCH Models for Count Time Series
+Version: 0.1.0
+Authors@R: person("Gudmund", "Hermansen", email = "gudmund.hermansen@gmail.com", role = c("aut", "cre"),
+                  comment = c(ORCID = "0009-0001-7256-867X"))
+Description: Provides tools for fitting, simulating, and analysing Dynamic 
+    Innovation Negative Binomial ARCH (NB-DINARCH) models for count time 
+    series data. Supports maximum likelihood estimation via Nelder-Mead 
+    optimisation, optional Bayesian inference via Stan, exogenous covariates, 
+    and dynamic simulation of count time series. Designed for applications 
+    in conflict research and event count modelling.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Imports:
+    data.table,
+    stats,
+    utils
+Suggests:
+    rstan,
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+Config/testthat/edition: 3
