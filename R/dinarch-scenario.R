@@ -3,10 +3,8 @@
 #' Build a smooth parameter transition path
 #'
 #' Interpolates from `from` to `to` over `n` steps, for constructing
-#' scenario parameter paths (e.g. `a`, `b`, or `phi` trajectories) to feed
-#' into [dinarch_simulate()] or [simulate.dinarch_fit()]. Generalizes the
-#' sigmoid-interpolation pattern used for earlier SSP-style scenario
-#' construction.
+#' scenario parameter paths (e.g. `b` or `phi` trajectories) to feed into
+#' [dinarch_simulate()] or [simulate.dinarch_fit()].
 #'
 #' @param from,to Starting and ending values (scalars). Works the same way
 #'   whether `to > from` (increasing path) or `to < from` (decreasing
@@ -17,15 +15,14 @@
 #' @param range For `shape = "sigmoid"`, the domain over which the sigmoid
 #'   is evaluated before rescaling to `[from, to]`. The default
 #'   `c(-3, 9)` is asymmetric - it front-loads the transition, reaching
-#'   close to `to` well before the final step, matching the pattern used
-#'   in earlier scenario-building code. Use a symmetric range like
+#'   close to `to` well before the final step. Use a symmetric range like
 #'   `c(-6, 6)` for a transition that eases in and out evenly at both
 #'   ends.
 #'
 #' @return A numeric vector of length `n`.
 #'
 #' @examples
-#' # front-loaded transition (matches earlier scenario-building code)
+#' # front-loaded transition (the default range)
 #' dinarch_transition_path(from = 0.1, to = 0.5, n = 20)
 #'
 #' # symmetric sigmoid ramp

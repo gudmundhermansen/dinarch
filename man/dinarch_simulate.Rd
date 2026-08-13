@@ -6,89 +6,126 @@
 \usage{
 dinarch_simulate(
   n,
-  a,
   b,
   phi,
-  population = NULL,
-  dynamic_population = FALSE,
+  formula = ~1,
   covariates = NULL,
-  beta = NULL,
+  beta,
   y_init = NULL,
   burn_in = 0,
-  threshold = NULL,
+  y_threshold = NULL,
   seed = NULL
 )
 }
 \arguments{
 \item{n}{Number of periods to simulate.}
 
-\item{a}{Baseline log-rate. Scalar or length-n vector.}
-
 \item{b}{Autoregressive (lag) coefficients, each in \verb{[0, 1)}. A scalar
-(k = 1, constant over time), a length-k vector (k lags, constant over
-time), or an n x k matrix (k lags, fully time-varying).}
+(\code{n_lags = 1}, constant over time), a length-\code{n_lags} vector
+(\code{n_lags} lags, constant over time), or an \verb{n x n_lags} matrix
+(\code{n_lags} lags, fully time-varying).}
 
 \item{phi}{Dispersion/concentration parameter (> 0). Scalar or
 length-n vector. Larger \code{phi} means less overdispersion.}
 
-\item{population}{Optional population path: \code{NULL} (default), a scalar,
-or a length-n vector. When \code{NULL}, the baseline term reduces to
-\code{exp(a)}.}
+\item{formula}{A one-sided formula specifying the linear predictor
+\code{eta} inside \code{exp(eta)} - e.g. \code{~ gdp}, \code{~ gdp * dem} for main
+effects plus their interaction, \code{~ log(population)} to give the mean
+a proportional-to-population baseline, or \code{~ 0 + gdp} to drop the
+intercept. Built via \code{\link[stats:model.matrix]{stats::model.matrix()}} against \code{covariates},
+so ordinary R formula conventions apply. Default \code{~1} (intercept
+only, i.e. \verb{mu_t = exp(beta) + lag term} when \code{covariates} is
+\code{NULL}) - matches \code{\link[=dinarch_fit_ml]{dinarch_fit_ml()}}.}
 
-\item{dynamic_population}{If \code{TRUE}, cumulative simulated deaths (within
-the \code{n} simulated periods) are subtracted from \code{population} as the
-simulation progresses, floored at 0. Requires \code{population}.}
+\item{covariates}{Optional data.frame (or matrix) with \code{n} rows holding
+the \emph{raw} covariate paths referenced by \code{formula} (e.g. a \code{gdp}, or
+\code{population}, column) - not a pre-built design matrix. \code{NULL}
+(default) simulates with \code{formula}'s intercept only.}
 
-\item{covariates}{Optional n x p matrix (or data.frame coercible to one)
-of additional covariates, each entering as
-\code{exp(beta_l) * covariates[, l]}. Off by default.}
+\item{beta}{Coefficients for \code{model.matrix(formula, covariates)}, each
+in the linear predictor \code{eta} (see Details) - length
+\code{ncol(model.matrix(formula, covariates))} (includes the intercept
+coefficient if \code{formula} has one - e.g. for the default
+\code{formula = ~1}, \code{covariates = NULL}, \code{beta} is a single number: the
+baseline log-rate), or an \verb{n x ncol(model.matrix(...))} matrix for
+fully time-varying
+coefficients (e.g. a covariate \emph{effect} that ramps up over a
+scenario horizon, as opposed to a time-varying covariate \emph{value},
+which instead varies \code{covariates} itself).}
 
-\item{beta}{Coefficients for \code{covariates}, length p. Required if
-\code{covariates} is supplied.}
-
-\item{y_init}{Optional vector of the last k observed y values, oldest to
-newest, seeding the autoregressive lags. If \code{NULL}, the process is
-warmed up stochastically for \code{burn_in} extra steps under the period-1
-parameter values (population/covariates also held at their period-1
-values), and the last k draws are used as the seed.}
+\item{y_init}{Optional vector of the last \code{n_lags} observed y values,
+oldest to newest, seeding the autoregressive lags. If \code{NULL}, the
+process is warmed up stochastically for \code{burn_in} extra steps under
+the period-1 parameter values (covariates also held at their
+period-1 values), and the last \code{n_lags} draws are used as the seed.}
 
 \item{burn_in}{Number of stochastic warm-up steps used when \code{y_init} is
 \code{NULL}. Ignored if \code{y_init} is supplied.}
 
-\item{threshold}{Optional list with elements \code{window}, \code{fraction}, and
-\code{pop_unit}. Once at least \code{window} periods of history exist: if the
-sum of the last \code{window} simulated deaths exceeds
-\code{fraction * pop_unit * population_t} (the \emph{current}, possibly
-depleted, population), the current period's simulated value is set to
-0. \code{NULL} (default) disables this. Requires \code{population}.}
+\item{y_threshold}{Optional list with elements \code{window} (scalar) and
+\code{limit} (scalar, or length-n vector for a time-varying cap, matching
+the \code{b}/\code{phi}/\code{beta} convention). Once at least \code{window} periods of
+history exist: if the sum of the last \code{window} simulated values
+exceeds \code{limit_t}, the current period's simulated value is set to 0.
+\code{NULL} (default) disables this.
+
+\code{limit} is a plain number, not a population-derived quantity - this
+is deliberately independent of \code{mu}/\code{formula}/\code{covariates}, so
+changing one can never silently change the other. If the limit you
+actually want is "X\% of population," compute it yourself first (e.g.
+\code{limit = fraction * population}, either a single number or a
+length-n vector) and pass the result directly.
+
+This is a \emph{reactive}, rolling-window rule, not a hard per-period cap:
+it compares history \emph{before} the current draw against the limit, so
+it stops sustained escalation once a bad stretch has already
+happened, but doesn't constrain any single period's draw directly -
+a single very large outlier can still occur before the rule reacts
+(though a conservatively chosen \code{limit} means a single serious
+outlier is often enough to trigger it on the \emph{next} period). With
+\code{n_lags > 1} a zeroed period still enters the lag history like any
+other value, which can interact with the rule in less obvious ways.}
 
 \item{seed}{Optional random seed.}
 }
 \value{
-A \code{data.table} with columns \code{index} (\code{1:n}), \code{y}, and
-\code{population} (the population path actually used, after any dynamic
-depletion; equal to the input \code{population} if \code{dynamic_population} is
-\code{FALSE}). If population depletes to 0 with no recent autoregressive
-momentum, the mean drops to exactly 0 and subsequent periods
-deterministically simulate \code{y = 0} (an absorbing "process has ended"
-state) rather than erroring.
+A \code{data.table} with columns \code{index} (\code{1:n}) and \code{y}.
 }
 \description{
 Simulates a Negative-Binomial Dynamic INnovation ARCH (DINARCH) count
 time series:
-\deqn{\mu_t = \exp(a_t) \cdot population_t + \sum_{j=1}^k b_{t,j} y_{t-j}
-  + \sum_l \exp(\beta_l) covariate_{t,l}}
+\deqn{\eta_t = \sum_j \beta_{t,j} z_{t,j}}
+\deqn{\mu_t = \exp(\eta_t) + \sum_{j=1}^k b_{t,j} y_{t-j}}
 \deqn{y_t \sim \mathrm{NegBinom}(r_t = \phi_t \mu_t,\; p_t = \phi_t/(1+\phi_t))}
+\code{k} above is the number of lags, inferred from \code{b} (see below) rather
+than passed separately, and \eqn{z_{t,\cdot}} is the row of
+\code{stats::model.matrix(formula, covariates)} for period \code{t} (see
+\code{formula} below). Every parameter (\code{b}, \code{phi}, \code{beta}) follows the same
+convention: a scalar or matching-length vector (constant over time), or
+a full \code{n}-row path (\verb{n x k} matrix for \code{b}/\code{beta}, length-\code{n} vector
+for \code{phi}) for fully time-varying parameters - see \code{\link[=dinarch_project]{dinarch_project()}}'s
+\code{new_para} for how a fitted model's forward \code{b}/\code{phi}/\code{beta} path can
+be overridden the same way. This is exactly the mean structure
+\code{\link[=dinarch_fit_ml]{dinarch_fit_ml()}}/\code{\link[=dinarch_fit_bayes]{dinarch_fit_bayes()}} fit - there is no distinguished
+\code{population} term here either; if \code{mu} should depend on population,
+include it as a \code{formula}/\code{covariates} term (e.g. \code{~ log(population)})
+like any other covariate. See \code{y_threshold} below for the \emph{only} place
+population-like quantities still get special treatment in this
+function, and note it does not feed back into \code{mu} at all.
 }
 \examples{
-# simple constant-parameter AR(1) count series, no population
-dinarch_simulate(n = 10, a = log(5), b = 0.3, phi = 10, seed = 1)
+# simple constant-parameter AR(1) count series
+dinarch_simulate(n = 10, b = 0.3, phi = 10, beta = log(5), seed = 1)
 
-# with a population path and dynamic depletion
+# population as an ordinary covariate (proportional effect on the mean,
+# via log(population) with beta = 1), plus a cap forcing y to 0 once
+# the last 5 periods sum past 3\% of population
+pop <- rep(1000, 10)
 dinarch_simulate(
-  n = 10, a = log(0.01), b = 0.3, phi = 5,
-  population = rep(1000, 10), dynamic_population = TRUE,
-  threshold = list(window = 5, fraction = 0.03, pop_unit = 1e6),
+  n = 10, b = 0.3, phi = 5,
+  formula = ~ log(population), covariates = data.frame(population = pop),
+  beta = c(log(0.01), 1),
+  y_threshold = list(window = 5, limit = 0.03 * pop),
   seed = 1
 )
 

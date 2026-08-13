@@ -25,8 +25,7 @@ path).}
 \item{range}{For \code{shape = "sigmoid"}, the domain over which the sigmoid
 is evaluated before rescaling to \verb{[from, to]}. The default
 \code{c(-3, 9)} is asymmetric - it front-loads the transition, reaching
-close to \code{to} well before the final step, matching the pattern used
-in earlier scenario-building code. Use a symmetric range like
+close to \code{to} well before the final step. Use a symmetric range like
 \code{c(-6, 6)} for a transition that eases in and out evenly at both
 ends.}
 }
@@ -35,13 +34,11 @@ A numeric vector of length \code{n}.
 }
 \description{
 Interpolates from \code{from} to \code{to} over \code{n} steps, for constructing
-scenario parameter paths (e.g. \code{a}, \code{b}, or \code{phi} trajectories) to feed
-into \code{\link[=dinarch_simulate]{dinarch_simulate()}} or \code{\link[=simulate.dinarch_fit]{simulate.dinarch_fit()}}. Generalizes the
-sigmoid-interpolation pattern used for earlier SSP-style scenario
-construction.
+scenario parameter paths (e.g. \code{b} or \code{phi} trajectories) to feed into
+\code{\link[=dinarch_simulate]{dinarch_simulate()}} or \code{\link[=simulate.dinarch_fit]{simulate.dinarch_fit()}}.
 }
 \examples{
-# front-loaded transition (matches earlier scenario-building code)
+# front-loaded transition (the default range)
 dinarch_transition_path(from = 0.1, to = 0.5, n = 20)
 
 # symmetric sigmoid ramp

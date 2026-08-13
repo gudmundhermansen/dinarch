@@ -4,73 +4,113 @@
 #'
 #' Simulates a Negative-Binomial Dynamic INnovation ARCH (DINARCH) count
 #' time series:
-#' \deqn{\mu_t = \exp(a_t) \cdot population_t + \sum_{j=1}^k b_{t,j} y_{t-j}
-#'   + \sum_l \exp(\beta_l) covariate_{t,l}}
+#' \deqn{\eta_t = \sum_j \beta_{t,j} z_{t,j}}
+#' \deqn{\mu_t = \exp(\eta_t) + \sum_{j=1}^k b_{t,j} y_{t-j}}
 #' \deqn{y_t \sim \mathrm{NegBinom}(r_t = \phi_t \mu_t,\; p_t = \phi_t/(1+\phi_t))}
+#' `k` above is the number of lags, inferred from `b` (see below) rather
+#' than passed separately, and \eqn{z_{t,\cdot}} is the row of
+#' `stats::model.matrix(formula, covariates)` for period `t` (see
+#' `formula` below). Every parameter (`b`, `phi`, `beta`) follows the same
+#' convention: a scalar or matching-length vector (constant over time), or
+#' a full `n`-row path (`n x k` matrix for `b`/`beta`, length-`n` vector
+#' for `phi`) for fully time-varying parameters - see [dinarch_project()]'s
+#' `new_para` for how a fitted model's forward `b`/`phi`/`beta` path can
+#' be overridden the same way. This is exactly the mean structure
+#' [dinarch_fit_ml()]/[dinarch_fit_bayes()] fit - there is no distinguished
+#' `population` term here either; if `mu` should depend on population,
+#' include it as a `formula`/`covariates` term (e.g. `~ log(population)`)
+#' like any other covariate. See `y_threshold` below for the *only* place
+#' population-like quantities still get special treatment in this
+#' function, and note it does not feed back into `mu` at all.
 #'
 #' @param n Number of periods to simulate.
-#' @param a Baseline log-rate. Scalar or length-n vector.
 #' @param b Autoregressive (lag) coefficients, each in `[0, 1)`. A scalar
-#'   (k = 1, constant over time), a length-k vector (k lags, constant over
-#'   time), or an n x k matrix (k lags, fully time-varying).
+#'   (`n_lags = 1`, constant over time), a length-`n_lags` vector
+#'   (`n_lags` lags, constant over time), or an `n x n_lags` matrix
+#'   (`n_lags` lags, fully time-varying).
 #' @param phi Dispersion/concentration parameter (> 0). Scalar or
 #'   length-n vector. Larger `phi` means less overdispersion.
-#' @param population Optional population path: `NULL` (default), a scalar,
-#'   or a length-n vector. When `NULL`, the baseline term reduces to
-#'   `exp(a)`.
-#' @param dynamic_population If `TRUE`, cumulative simulated deaths (within
-#'   the `n` simulated periods) are subtracted from `population` as the
-#'   simulation progresses, floored at 0. Requires `population`.
-#' @param covariates Optional n x p matrix (or data.frame coercible to one)
-#'   of additional covariates, each entering as
-#'   `exp(beta_l) * covariates[, l]`. Off by default.
-#' @param beta Coefficients for `covariates`, length p. Required if
-#'   `covariates` is supplied.
-#' @param y_init Optional vector of the last k observed y values, oldest to
-#'   newest, seeding the autoregressive lags. If `NULL`, the process is
-#'   warmed up stochastically for `burn_in` extra steps under the period-1
-#'   parameter values (population/covariates also held at their period-1
-#'   values), and the last k draws are used as the seed.
+#' @param formula A one-sided formula specifying the linear predictor
+#'   `eta` inside `exp(eta)` - e.g. `~ gdp`, `~ gdp * dem` for main
+#'   effects plus their interaction, `~ log(population)` to give the mean
+#'   a proportional-to-population baseline, or `~ 0 + gdp` to drop the
+#'   intercept. Built via [stats::model.matrix()] against `covariates`,
+#'   so ordinary R formula conventions apply. Default `~1` (intercept
+#'   only, i.e. `mu_t = exp(beta) + lag term` when `covariates` is
+#'   `NULL`) - matches [dinarch_fit_ml()].
+#' @param covariates Optional data.frame (or matrix) with `n` rows holding
+#'   the *raw* covariate paths referenced by `formula` (e.g. a `gdp`, or
+#'   `population`, column) - not a pre-built design matrix. `NULL`
+#'   (default) simulates with `formula`'s intercept only.
+#' @param beta Coefficients for `model.matrix(formula, covariates)`, each
+#'   in the linear predictor `eta` (see Details) - length
+#'   `ncol(model.matrix(formula, covariates))` (includes the intercept
+#'   coefficient if `formula` has one - e.g. for the default
+#'   `formula = ~1`, `covariates = NULL`, `beta` is a single number: the
+#'   baseline log-rate), or an `n x ncol(model.matrix(...))` matrix for
+#'   fully time-varying
+#'   coefficients (e.g. a covariate *effect* that ramps up over a
+#'   scenario horizon, as opposed to a time-varying covariate *value*,
+#'   which instead varies `covariates` itself).
+#' @param y_init Optional vector of the last `n_lags` observed y values,
+#'   oldest to newest, seeding the autoregressive lags. If `NULL`, the
+#'   process is warmed up stochastically for `burn_in` extra steps under
+#'   the period-1 parameter values (covariates also held at their
+#'   period-1 values), and the last `n_lags` draws are used as the seed.
 #' @param burn_in Number of stochastic warm-up steps used when `y_init` is
 #'   `NULL`. Ignored if `y_init` is supplied.
-#' @param threshold Optional list with elements `window`, `fraction`, and
-#'   `pop_unit`. Once at least `window` periods of history exist: if the
-#'   sum of the last `window` simulated deaths exceeds
-#'   `fraction * pop_unit * population_t` (the *current*, possibly
-#'   depleted, population), the current period's simulated value is set to
-#'   0. `NULL` (default) disables this. Requires `population`.
+#' @param y_threshold Optional list with elements `window` (scalar) and
+#'   `limit` (scalar, or length-n vector for a time-varying cap, matching
+#'   the `b`/`phi`/`beta` convention). Once at least `window` periods of
+#'   history exist: if the sum of the last `window` simulated values
+#'   exceeds `limit_t`, the current period's simulated value is set to 0.
+#'   `NULL` (default) disables this.
+#'
+#'   `limit` is a plain number, not a population-derived quantity - this
+#'   is deliberately independent of `mu`/`formula`/`covariates`, so
+#'   changing one can never silently change the other. If the limit you
+#'   actually want is "X% of population," compute it yourself first (e.g.
+#'   `limit = fraction * population`, either a single number or a
+#'   length-n vector) and pass the result directly.
+#'
+#'   This is a *reactive*, rolling-window rule, not a hard per-period cap:
+#'   it compares history *before* the current draw against the limit, so
+#'   it stops sustained escalation once a bad stretch has already
+#'   happened, but doesn't constrain any single period's draw directly -
+#'   a single very large outlier can still occur before the rule reacts
+#'   (though a conservatively chosen `limit` means a single serious
+#'   outlier is often enough to trigger it on the *next* period). With
+#'   `n_lags > 1` a zeroed period still enters the lag history like any
+#'   other value, which can interact with the rule in less obvious ways.
 #' @param seed Optional random seed.
 #'
-#' @return A `data.table` with columns `index` (`1:n`), `y`, and
-#'   `population` (the population path actually used, after any dynamic
-#'   depletion; equal to the input `population` if `dynamic_population` is
-#'   `FALSE`). If population depletes to 0 with no recent autoregressive
-#'   momentum, the mean drops to exactly 0 and subsequent periods
-#'   deterministically simulate `y = 0` (an absorbing "process has ended"
-#'   state) rather than erroring.
+#' @return A `data.table` with columns `index` (`1:n`) and `y`.
 #'
 #' @examples
-#' # simple constant-parameter AR(1) count series, no population
-#' dinarch_simulate(n = 10, a = log(5), b = 0.3, phi = 10, seed = 1)
+#' # simple constant-parameter AR(1) count series
+#' dinarch_simulate(n = 10, b = 0.3, phi = 10, beta = log(5), seed = 1)
 #'
-#' # with a population path and dynamic depletion
+#' # population as an ordinary covariate (proportional effect on the mean,
+#' # via log(population) with beta = 1), plus a cap forcing y to 0 once
+#' # the last 5 periods sum past 3% of population
+#' pop <- rep(1000, 10)
 #' dinarch_simulate(
-#'   n = 10, a = log(0.01), b = 0.3, phi = 5,
-#'   population = rep(1000, 10), dynamic_population = TRUE,
-#'   threshold = list(window = 5, fraction = 0.03, pop_unit = 1e6),
+#'   n = 10, b = 0.3, phi = 5,
+#'   formula = ~ log(population), covariates = data.frame(population = pop),
+#'   beta = c(log(0.01), 1),
+#'   y_threshold = list(window = 5, limit = 0.03 * pop),
 #'   seed = 1
 #' )
 #'
 #' @export
 dinarch_simulate <- function(n,
-                              a, b, phi,
-                              population = NULL,
-                              dynamic_population = FALSE,
+                              b, phi,
+                              formula = ~1,
                               covariates = NULL,
-                              beta = NULL,
+                              beta,
                               y_init = NULL,
                               burn_in = 0,
-                              threshold = NULL,
+                              y_threshold = NULL,
                               seed = NULL) {
 
   if (!is.null(seed)) set.seed(seed)
@@ -81,13 +121,17 @@ dinarch_simulate <- function(n,
     burn_in == round(burn_in)
   )
 
-  # --- baseline parameters ---------------------------------------------
-  a   <- .recycle(a, n)
+  # baseenv() so a variable referenced by `formula` but missing from
+  # `covariates` errors clearly, instead of model.matrix() silently
+  # falling back to a same-named variable wherever `formula` was written
+  # (base functions like log() remain usable).
+  formula <- stats::as.formula(formula)
+  environment(formula) <- baseenv()
   phi <- .recycle(phi, n)
   .check_positive(phi)
 
-  B <- .as_lag_matrix(b, n)
-  k <- ncol(B)
+  B <- .as_coef_matrix(b, n)
+  n_lags <- ncol(B)
   if (any(B < 0 | B >= 1, na.rm = TRUE)) {
     stop("`b` must lie in [0, 1).")
   }
@@ -98,125 +142,102 @@ dinarch_simulate <- function(n,
     )
   }
 
-  # --- population --------------------------------------------------------
-  has_population <- !is.null(population)
-  if (has_population) {
-    pop <- .recycle(population, n)
-    .check_positive(pop)
-  } else {
-    if (dynamic_population) {
-      stop("`dynamic_population = TRUE` requires `population` to be supplied.")
+  # --- covariate design matrix (formula) ----------------------------------
+  cov_df <- if (is.null(covariates)) data.frame(row.names = seq_len(n)) else as.data.frame(covariates)
+  if (nrow(cov_df) != n) {
+    stop(sprintf("`covariates` must have %d rows (= n), not %d.", n, nrow(cov_df)))
+  }
+  Xcov <- stats::model.matrix(formula, data = cov_df)
+  if (nrow(Xcov) != n) {
+    stop("`formula` produced fewer rows than `n` - check `covariates` for missing values.")
+  }
+  n_beta <- ncol(Xcov)
+  if (missing(beta)) {
+    stop(sprintf(
+      "`beta` must be supplied: length %d (= ncol(model.matrix(formula, covariates))), ",
+      n_beta
+    ), sprintf("or an n x %d matrix for time-varying coefficients.", n_beta))
+  }
+  Beta <- .as_coef_matrix(beta, n, n_beta)
+  eta <- rowSums(Xcov * Beta)
+
+  # --- y_threshold rule ------------------------------------------------
+  # `limit` may be a scalar (constant) or a length-n vector (time-varying
+  # cap), matching the b/phi/beta convention. Deliberately independent of
+  # mu/formula/covariates - if `limit` should be "X% of population",
+  # compute that yourself and pass the resulting number(s) directly.
+  if (!is.null(y_threshold)) {
+    if (!all(c("window", "limit") %in% names(y_threshold))) {
+      stop("`y_threshold` must be a list with elements `window` and `limit`.")
     }
-    if (!is.null(threshold)) {
-      stop("`threshold` requires `population` to be supplied.")
-    }
-    pop <- rep(1, n)
+    y_threshold$limit <- .recycle(y_threshold$limit, n, "y_threshold$limit")
   }
 
-  # --- additional covariates ---------------------------------------------
-  if (!is.null(covariates)) {
-    Xcov <- as.matrix(covariates)
-    if (nrow(Xcov) != n) {
-      stop(sprintf("`covariates` must have %d rows (= n), not %d.", n, nrow(Xcov)))
-    }
-    if (is.null(beta) || length(beta) != ncol(Xcov)) {
-      stop("`beta` must be supplied with length equal to ncol(covariates).")
-    }
-    cov_term <- as.numeric(Xcov %*% exp(beta))
-  } else {
-    cov_term <- rep(0, n)
-  }
-
-  # --- threshold rule ------------------------------------------------
-  if (!is.null(threshold)) {
-    if (!all(c("window", "fraction", "pop_unit") %in% names(threshold))) {
-      stop("`threshold` must be a list with elements `window`, `fraction`, `pop_unit`.")
-    }
-  }
-
-  # --- seed the k autoregressive lags -------------------------------------
+  # --- seed the n_lags autoregressive lags --------------------------------
   if (!is.null(y_init)) {
-    if (length(y_init) != k) {
-      stop(sprintf("`y_init` must have length %d (= k).", k))
+    if (length(y_init) != n_lags) {
+      stop(sprintf("`y_init` must have length %d (= n_lags).", n_lags))
     }
     y_history <- as.numeric(y_init)
   } else {
     y_history <- .warm_up_dinarch(
-      k = k, burn_in = burn_in,
-      a0 = a[1], b0 = B[1, ], phi0 = phi[1],
-      pop0 = pop[1], cov0 = cov_term[1]
+      n_lags = n_lags, burn_in = burn_in,
+      eta0 = eta[1], b0 = B[1, ], phi0 = phi[1]
     )
   }
 
   # --- main simulation loop -----------------------------------------------
   y <- numeric(n)
-  pop_used <- numeric(n)
-  cum_deaths <- 0
 
   for (t in seq_len(n)) {
 
-    pop_t <- if (dynamic_population) max(pop[t] - cum_deaths, 0) else pop[t]
-    pop_used[t] <- pop_t
+    lag_term <- sum(B[t, ] * rev(utils::tail(y_history, n_lags)))
+    mu_t <- exp(eta[t]) + lag_term
 
-    lag_term <- sum(B[t, ] * rev(utils::tail(y_history, k)))
-    mu_t <- exp(a[t]) * pop_t + lag_term + cov_term[t]
-
-    if (!is.finite(mu_t) || mu_t < 0) {
+    if (!is.finite(mu_t) || mu_t <= 0) {
       stop(sprintf(
-        "Negative or non-finite mean at period %d (mu = %s). Check `a`, `population`, `b`, or `covariates`.",
+        "Non-positive or non-finite mean at period %d (mu = %s). Check `beta`, `covariates`, or `b`.",
         t, format(mu_t)
       ))
     }
 
-    if (mu_t == 0) {
-      # e.g. population fully depleted with no recent autoregressive
-      # momentum: the only sensible outcome is no event this period.
-      y[t] <- 0
-    } else {
-      r_t <- phi[t] * mu_t
-      p_t <- phi[t] / (1 + phi[t])
-      y[t] <- stats::rnbinom(1, size = r_t, prob = p_t)
-    }
+    r_t <- phi[t] * mu_t
+    p_t <- phi[t] / (1 + phi[t])
+    y[t] <- stats::rnbinom(1, size = r_t, prob = p_t)
 
-    if (!is.null(threshold) && length(y_history) >= threshold$window) {
-      recent <- sum(utils::tail(y_history, threshold$window))
-      if (recent > threshold$fraction * threshold$pop_unit * pop_t) {
+    if (!is.null(y_threshold) && length(y_history) >= y_threshold$window) {
+      recent <- sum(utils::tail(y_history, y_threshold$window))
+      if (recent > y_threshold$limit[t]) {
         y[t] <- 0
       }
     }
 
-    if (dynamic_population) cum_deaths <- cum_deaths + y[t]
     y_history <- c(y_history, y[t])
   }
 
-  data.table::data.table(index = seq_len(n), y = y, population = pop_used)
+  data.table::data.table(index = seq_len(n), y = y)
 }
 
-#' Stochastic warm-up to seed the initial k lags under constant (period-1)
-#' parameter values. Starts from an all-zero pre-history and returns the
-#' last k generated values.
+#' Stochastic warm-up to seed the initial n_lags lags under constant
+#' (period-1) parameter values. Starts from an all-zero pre-history and
+#' returns the last n_lags generated values.
 #' @noRd
-.warm_up_dinarch <- function(k, burn_in, a0, b0, phi0, pop0, cov0 = 0) {
-  total <- k + burn_in
-  history <- rep(0, k)
+.warm_up_dinarch <- function(n_lags, burn_in, eta0, b0, phi0) {
+  total <- n_lags + burn_in
+  history <- rep(0, n_lags)
 
   for (t in seq_len(total)) {
-    lag_vals <- rev(utils::tail(history, k))
-    mu <- exp(a0) * pop0 + sum(b0 * lag_vals) + cov0
+    lag_vals <- rev(utils::tail(history, n_lags))
+    mu <- exp(eta0) + sum(b0 * lag_vals)
 
-    if (!is.finite(mu) || mu < 0) {
-      stop("Negative or non-finite mean during warm-up; check `a`, `population`, or `b`.")
+    if (!is.finite(mu) || mu <= 0) {
+      stop("Non-positive or non-finite mean during warm-up; check `beta`, `covariates`, or `b`.")
     }
 
-    if (mu == 0) {
-      y_t <- 0
-    } else {
-      r <- phi0 * mu
-      p <- phi0 / (1 + phi0)
-      y_t <- stats::rnbinom(1, size = r, prob = p)
-    }
-    history <- c(history, y_t)
+    r <- phi0 * mu
+    p <- phi0 / (1 + phi0)
+    history <- c(history, stats::rnbinom(1, size = r, prob = p))
   }
 
-  utils::tail(history, k)
+  utils::tail(history, n_lags)
 }

@@ -2,15 +2,14 @@
 
 #' @export
 print.dinarch_fit <- function(x, ...) {
-  cat(sprintf("<dinarch_fit>  method = %s   k = %d\n", x$method, x$k))
+  cat(sprintf("<dinarch_fit>  method = %s   n_lags = %d\n", x$method, x$n_lags))
 
-  cat(sprintf("  a   = %s\n", format(x$coefficients$a, digits = 4)))
   cat(sprintf("  b   = %s\n", paste(format(x$coefficients$b, digits = 4), collapse = ", ")))
   cat(sprintf("  phi = %s\n", format(x$coefficients$phi, digits = 4)))
-
-  if (length(x$coefficients$beta) > 0) {
-    cat(sprintf("  beta = %s\n", paste(format(x$coefficients$beta, digits = 4), collapse = ", ")))
-  }
+  cat(sprintf("  beta = %s\n", paste(
+    sprintf("%s = %s", names(x$coefficients$beta), format(x$coefficients$beta, digits = 4)),
+    collapse = ", "
+  )))
 
   if (!is.null(x$loglik)) {
     cat(sprintf("Log-likelihood: %.2f  (n = %d)\n", x$loglik, x$n_obs))
@@ -41,16 +40,12 @@ coef.dinarch_fit <- function(object, ...) {
 summary.dinarch_fit <- function(object, level = 0.95, ...) {
 
   coef_names <- c(
-    "a",
-    paste0("b[", seq_len(object$k), "]"),
+    paste0("b[", seq_len(object$n_lags), "]"),
     "phi",
-    if (length(object$coefficients$beta) > 0) {
-      paste0("beta[", seq_along(object$coefficients$beta), "]")
-    }
+    names(object$coefficients$beta)
   )
 
   estimate <- c(
-    object$coefficients$a,
     object$coefficients$b,
     object$coefficients$phi,
     object$coefficients$beta
@@ -61,7 +56,6 @@ summary.dinarch_fit <- function(object, level = 0.95, ...) {
     probs <- c(alpha / 2, 1 - alpha / 2)
 
     post_mat <- cbind(
-      matrix(object$posterior$a, ncol = 1),
       object$posterior$b,
       matrix(object$posterior$phi, ncol = 1),
       if (length(object$coefficients$beta) > 0) object$posterior$beta
@@ -83,7 +77,7 @@ summary.dinarch_fit <- function(object, level = 0.95, ...) {
 
   structure(
     list(
-      method = object$method, k = object$k,
+      method = object$method, n_lags = object$n_lags,
       n_obs = object$n_obs, coefficients = coef_table,
       loglik = object$loglik, aic = aic, bic = bic,
       convergence = object$convergence, level = level
@@ -94,7 +88,7 @@ summary.dinarch_fit <- function(object, level = 0.95, ...) {
 
 #' @export
 print.summary.dinarch_fit <- function(x, ...) {
-  cat(sprintf("DINARCH fit (%s)   k = %d   n = %d\n", x$method, x$k, x$n_obs))
+  cat(sprintf("DINARCH fit (%s)   n_lags = %d   n = %d\n", x$method, x$n_lags, x$n_obs))
   cat(strrep("-", 50), "\n", sep = "")
   print(x$coefficients, row.names = FALSE, digits = 4)
   cat(strrep("-", 50), "\n", sep = "")
@@ -117,9 +111,10 @@ print.summary.dinarch_fit <- function(x, ...) {
 
 #' Simulate forward from a fitted DINARCH model
 #'
-#' A convenience wrapper around [dinarch_simulate()] that pulls `a`, `b`,
-#' `phi`, and `beta` directly from a `"dinarch_fit"` object, so you don't
-#' have to copy coefficients out by hand.
+#' A convenience wrapper around [dinarch_simulate()] that pulls `b`,
+#' `phi`, and `beta` (plus the fit's `formula`) directly from a
+#' `"dinarch_fit"` object, so you don't have to copy coefficients out by
+#' hand.
 #'
 #' The parameter is named `nsim` (not `n`) specifically to match
 #' [stats::simulate()]'s generic signature - calling `simulate(fit, n = 20)`
@@ -130,72 +125,52 @@ print.summary.dinarch_fit <- function(x, ...) {
 #' @param object A `"dinarch_fit"` object.
 #' @param nsim Number of periods to simulate forward.
 #' @param seed Optional random seed.
-#' @param population,covariates,dynamic_population,threshold,y_init,burn_in
-#'   Forward paths/settings for the simulated horizon - see
-#'   [dinarch_simulate()]. These describe the *future*, so they are not
-#'   taken from the fit automatically.
+#' @param covariates,y_threshold,y_init,burn_in Forward paths/settings for
+#'   the simulated horizon - see [dinarch_simulate()]. These describe the
+#'   *future*, so they are not taken from the fit automatically;
+#'   `covariates` must supply whatever variables the fit's `formula`
+#'   references (a warning is issued if it references any and
+#'   `covariates` is `NULL`).
 #' @param use_draw For Bayesian fits only: an integer index into the stored
-#'   posterior draws. If supplied, that specific draw's parameters are used
-#'   instead of the posterior mean - call this repeatedly with different
-#'   indices to propagate full posterior uncertainty into a simulation
-#'   ensemble. `NULL` (default) uses the point estimate (posterior mean for
-#'   Bayesian fits, MLE for ML fits).
+#'   posterior draws, or `"random"` to sample a fresh draw. If supplied,
+#'   that draw's parameters are used instead of the posterior mean - call
+#'   this repeatedly (e.g. with `"random"`) to propagate full posterior
+#'   uncertainty into a simulation ensemble. `NULL` (default) uses the
+#'   point estimate (posterior mean for Bayesian fits, MLE for ML fits).
 #' @param ... Unused.
 #'
 #' @return A `data.table`, as for [dinarch_simulate()].
 #' @export
 simulate.dinarch_fit <- function(object, nsim = 10, seed = NULL,
-                                  population = NULL, covariates = NULL,
-                                  dynamic_population = FALSE,
-                                  threshold = NULL,
+                                  covariates = NULL,
+                                  y_threshold = NULL,
                                   y_init = NULL, burn_in = 0,
                                   use_draw = NULL, ...) {
 
-  if (!is.null(use_draw)) {
-    if (is.null(object$posterior)) {
-      stop("`use_draw` is only available for Bayesian fits (this fit has no stored posterior draws).")
-    }
-    n_draws <- length(object$posterior$a)
-    if (use_draw < 1 || use_draw > n_draws || use_draw != round(use_draw)) {
-      stop(sprintf("`use_draw` must be an integer between 1 and %d.", n_draws))
-    }
-    a   <- object$posterior$a[use_draw]
-    b   <- object$posterior$b[use_draw, ]
-    phi <- object$posterior$phi[use_draw]
-    beta <- if (length(object$coefficients$beta) > 0) object$posterior$beta[use_draw, ] else numeric(0)
-  } else {
-    a    <- object$coefficients$a
-    b    <- object$coefficients$b
-    phi  <- object$coefficients$phi
-    beta <- object$coefficients$beta
-  }
+  pars <- .dinarch_pick_params(object, use_draw)
+  b <- pars$b; phi <- pars$phi; beta <- pars$beta
 
-  if (isTRUE(object$population_used) && is.null(population)) {
+  formula_terms <- attr(stats::terms(object$formula), "term.labels")
+  if (length(formula_terms) > 0 && is.null(covariates)) {
     warning(
-      "This fit used a `population` covariate; no forward `population` ",
-      "path was supplied, so the baseline term will use population = 1, ",
-      "which is likely not what you want."
-    )
-  }
-  if (length(object$covariates_used) > 0 && is.null(covariates)) {
-    warning(
-      "This fit used additional covariates (",
-      paste(object$covariates_used, collapse = ", "),
-      "); no forward `covariates` were supplied, so that term will be ",
-      "dropped from the simulation."
+      "This fit's `formula` references covariate(s) (",
+      paste(formula_terms, collapse = ", "),
+      "); no forward `covariates` were supplied, so `model.matrix()` will ",
+      "fail unless those variables happen to not be needed (e.g. an ",
+      "interaction-only formula) - supply a `covariates` data.frame with ",
+      "the forward paths for these variables."
     )
   }
 
   dinarch_simulate(
     n = nsim,
-    a = a, b = b, phi = phi,
-    population = population,
-    dynamic_population = dynamic_population,
+    b = b, phi = phi,
+    formula = object$formula,
     covariates = covariates,
-    beta = if (length(beta) > 0) beta else NULL,
+    beta = beta,
     y_init = y_init,
     burn_in = burn_in,
-    threshold = threshold,
+    y_threshold = y_threshold,
     seed = seed
   )
 }

@@ -8,10 +8,8 @@
   object,
   nsim = 10,
   seed = NULL,
-  population = NULL,
   covariates = NULL,
-  dynamic_population = FALSE,
-  threshold = NULL,
+  y_threshold = NULL,
   y_init = NULL,
   burn_in = 0,
   use_draw = NULL,
@@ -25,16 +23,19 @@
 
 \item{seed}{Optional random seed.}
 
-\item{population, covariates, dynamic_population, threshold, y_init, burn_in}{Forward paths/settings for the simulated horizon - see
-\code{\link[=dinarch_simulate]{dinarch_simulate()}}. These describe the \emph{future}, so they are not
-taken from the fit automatically.}
+\item{covariates, y_threshold, y_init, burn_in}{Forward paths/settings for
+the simulated horizon - see \code{\link[=dinarch_simulate]{dinarch_simulate()}}. These describe the
+\emph{future}, so they are not taken from the fit automatically;
+\code{covariates} must supply whatever variables the fit's \code{formula}
+references (a warning is issued if it references any and
+\code{covariates} is \code{NULL}).}
 
 \item{use_draw}{For Bayesian fits only: an integer index into the stored
-posterior draws. If supplied, that specific draw's parameters are used
-instead of the posterior mean - call this repeatedly with different
-indices to propagate full posterior uncertainty into a simulation
-ensemble. \code{NULL} (default) uses the point estimate (posterior mean for
-Bayesian fits, MLE for ML fits).}
+posterior draws, or \code{"random"} to sample a fresh draw. If supplied,
+that draw's parameters are used instead of the posterior mean - call
+this repeatedly (e.g. with \code{"random"}) to propagate full posterior
+uncertainty into a simulation ensemble. \code{NULL} (default) uses the
+point estimate (posterior mean for Bayesian fits, MLE for ML fits).}
 
 \item{...}{Unused.}
 }
@@ -42,9 +43,10 @@ Bayesian fits, MLE for ML fits).}
 A \code{data.table}, as for \code{\link[=dinarch_simulate]{dinarch_simulate()}}.
 }
 \description{
-A convenience wrapper around \code{\link[=dinarch_simulate]{dinarch_simulate()}} that pulls \code{a}, \code{b},
-\code{phi}, and \code{beta} directly from a \code{"dinarch_fit"} object, so you don't
-have to copy coefficients out by hand.
+A convenience wrapper around \code{\link[=dinarch_simulate]{dinarch_simulate()}} that pulls \code{b},
+\code{phi}, and \code{beta} (plus the fit's \code{formula}) directly from a
+\code{"dinarch_fit"} object, so you don't have to copy coefficients out by
+hand.
 }
 \details{
 The parameter is named \code{nsim} (not \code{n}) specifically to match

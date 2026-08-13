@@ -8,26 +8,42 @@
 \description{
 Tools for fitting, simulating, and analysing Dynamic Innovation Negative
 Binomial ARCH (NB-DINARCH) models for count time series. Supports maximum
-likelihood estimation, optional Bayesian estimation via Stan, optional
-population scaling and additional covariates, dynamic (time-varying)
+likelihood estimation, optional Bayesian estimation via Stan, a formula/
+\code{model.matrix()}-based covariate interface, dynamic (time-varying)
 parameters, and scenario-based simulation.
 }
 \section{Model}{
 
-For a series \code{y_t} with \code{k} autoregressive lags, optional population
-scaling, and optional additional covariates:
+For a series \code{y_t} with \code{n_lags} autoregressive lags (\code{k} below) and a
+covariate linear predictor \code{eta_t} built from \code{formula} via
+\code{\link[stats:model.matrix]{stats::model.matrix()}}:
 
-\deqn{\mu_t = \exp(a_t) \cdot population_t +
-  \sum_{j=1}^k b_{t,j} \, y_{t-j} +
-  \sum_l \exp(\beta_l) \cdot covariate_{t,l}}
+\deqn{\eta_t = \sum_j \beta_j z_{t,j}}
+\deqn{\mu_t = \exp(\eta_t) + \sum_{j=1}^k b_{t,j} \, y_{t-j}}
 \deqn{r_t = \phi_t \, \mu_t, \quad p_t = \phi_t / (1 + \phi_t)}
 \deqn{y_t \sim \mathrm{NegBinom}(r_t, p_t)}
 
-If \code{population} is not supplied, \verb{population_t \\equiv 1}, recovering a
-pure-intercept baseline. If \code{covariates} is not supplied, that term is
-dropped entirely.
+\code{formula}'s default \code{~1} gives an intercept-only \code{eta_t} (a single
+\code{beta_0} playing the role a fixed baseline term might otherwise play).
+There is no distinguished \code{population} argument anywhere in the
+package, including \code{\link[=dinarch_simulate]{dinarch_simulate()}} - if \code{mu} should scale
+(sub/super-)proportionally with a population/exposure variable,
+include \code{log(population)} as one of \code{formula}'s terms, same as fitting.
+\code{\link[=dinarch_simulate]{dinarch_simulate()}} separately takes an optional \code{y_threshold}
+argument that caps the rolling sum of simulated \code{y} at a plain numeric
+limit - deliberately unrelated to \code{mu}/\code{formula}/\code{covariates}, so it
+can never be confused with (or silently coupled to) a population
+covariate.
 }
 
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://github.com/gudmundhermansen/dinarch}
+  \item Report bugs at \url{https://github.com/gudmundhermansen/dinarch/issues}
+}
+
+}
 \author{
 \strong{Maintainer}: Gudmund Hermansen \email{gudmund.hermansen@gmail.com} (\href{https://orcid.org/0009-0001-7256-867X}{ORCID})
 

@@ -9,9 +9,8 @@ dinarch_fit_bayes(
   y = "y",
   index = "index",
   group = NULL,
-  population = NULL,
-  covariates = NULL,
-  k = 1,
+  formula = ~1,
+  n_lags = 1,
   prior = list(),
   iter = 5000,
   chains = 3,
@@ -21,37 +20,83 @@ dinarch_fit_bayes(
 }
 \arguments{
 \item{data}{A data.frame or data.table containing at least the \code{y} and
-\code{index} columns (and \code{group}/\code{population}/\code{covariates} columns if
-used).}
+\code{index} columns (and \code{group} and any variables referenced by
+\code{formula} if used).}
 
-\item{y, index, group, population}{Column names (strings) in \code{data}. \code{group}
+\item{y, index, group}{Column names (strings) in \code{data}. \code{group}
 identifies separate series (lags are never taken across a group
-boundary); if \code{NULL}, all rows are treated as one series. \code{population}
-is optional; if \code{NULL} the baseline term reduces to \code{exp(a)}.}
+boundary); if \code{NULL}, all rows are treated as one series.}
 
-\item{covariates}{Optional character vector of additional covariate
-column names in \code{data}.}
+\item{formula}{A one-sided formula specifying the linear predictor
+\code{eta} inside \code{exp(eta)} - e.g. \code{~ pop_log + gdp}, \code{~ pop_log * gdp}
+for main effects plus their interaction, \code{~ dem:pop_log} for an
+interaction only, or \code{~ 0 + pop_log} to drop the intercept. Built via
+\code{\link[stats:model.matrix]{stats::model.matrix()}}, so ordinary R formula conventions apply
+(interactions via \code{:}, \code{*}; intercept dropped via \code{- 1} or \verb{0 +}).
+Variables are resolved against \code{data}, so inline transforms like
+\code{~ log(population) + gdp} work directly. Default \code{~1} (intercept
+only, i.e. \verb{mu_t = exp(beta_0) + lag term}, the model's simplest
+case). There is no separate \code{population} argument - if \code{mu} should
+scale proportionally with population the way \code{stats::glm()}'s
+\code{offset()} scales a Poisson/NB mean, include \code{log(population)} in
+\code{formula} (a freely estimated coefficient here nests that as the
+special case where it equals 1, i.e. \code{population^1}, while also
+allowing sub/super-linear scaling if the data supports it).}
 
-\item{k}{Number of autoregressive lags.}
+\item{n_lags}{Number of autoregressive lags.}
 
-\item{prior}{A list with elements \code{a} (mean, sd for a Normal prior),
-\code{b} (shape1, shape2 for a Beta prior, applied to every lag
-coefficient), \code{phi} (shape, rate for a Gamma prior), and \code{beta}
-(mean, sd for a Normal prior, only used if \code{covariates} is supplied).
-Any omitted elements fall back to the defaults.}
+\item{prior}{A list with elements \code{b} (shape1, shape2 - two numbers,
+regardless of \code{n_lags}), \code{phi} (shape, rate for a Gamma prior), and
+\code{beta} (mean, sd for a Normal prior, applied to every coefficient in
+\code{beta}, including the intercept if \code{formula} includes one). Any
+omitted elements fall back to the defaults.
+
+\code{b}'s two numbers parameterize a joint Dirichlet prior over
+\verb{(b_1, ..., b_\{n_lags\}, 1 - sum(b))} - \code{shape1} repeated for each of
+the \code{n_lags} lag components, \code{shape2} for the \code{(n_lags + 1)}th
+("slack") component - which guarantees \code{sum(b) < 1} (the model's
+stationarity condition, see \code{\link[=dinarch_fit_ml]{dinarch_fit_ml()}}/\code{\link[=dinarch_simulate]{dinarch_simulate()}})
+for every posterior draw, for any \code{n_lags}. At \code{n_lags = 1} this is
+exactly a \code{Beta(shape1, shape2)} prior on \code{b} (a 2-outcome Dirichlet
+is a Beta); for \code{n_lags > 1} it's the natural generalization that
+also happens to shrink the prior mean of each individual lag
+coefficient towards 0 as \code{n_lags} grows, since more lags are sharing
+the same \code{sum(b) < 1} budget.}
 
 \item{iter, chains}{Passed to \code{\link[rstan:stanmodel-method-sampling]{rstan::sampling()}}.}
 
 \item{seed}{Optional random seed, passed to \code{\link[rstan:stanmodel-method-sampling]{rstan::sampling()}}.}
 
-\item{...}{Further arguments passed to \code{\link[rstan:stanmodel-method-sampling]{rstan::sampling()}}.}
+\item{...}{Further arguments passed to \code{\link[rstan:stanmodel-method-sampling]{rstan::sampling()}} - e.g. a
+custom \code{init} to override the default described in Details.}
 }
 \value{
-An object of class \code{"dinarch_fit"}, as for \code{\link[=dinarch_fit_ml]{dinarch_fit_ml()}},
-with \code{method = "bayes"}, plus \code{stanfit} (the raw \code{stanfit} object) and
-\code{posterior} (a list of posterior draws for \code{a}, \code{b}, \code{phi}, \code{beta}).
+An object of class \code{"dinarch_fit"}, as for \code{\link[=dinarch_fit_ml]{dinarch_fit_ml()}}
+(including \code{data}, see there), with \code{method = "bayes"}, plus
+\code{stanfit} (the raw \code{stanfit} object) and \code{posterior} (a list of
+posterior draws for \code{b}, \code{phi}, \code{beta}).
 }
 \description{
 Same model as \code{\link[=dinarch_fit_ml]{dinarch_fit_ml()}}, estimated via Hamiltonian Monte Carlo
 with \code{\link[rstan:stanmodel-method-sampling]{rstan::sampling()}}. Requires the (Suggested) \code{rstan} package.
+}
+\details{
+\strong{Covariate scale matters more here than for \code{\link[=dinarch_fit_ml]{dinarch_fit_ml()}}.}
+\verb{mu = exp(eta) + lag term}, so a \code{formula} covariate on a large raw
+scale (e.g. a country's population in the tens of millions) needs a
+correspondingly tiny coefficient - fine once the sampler has found
+that region, but Stan's default initialization draws every
+unconstrained parameter independently from \code{Uniform(-2, 2)}, so a
+coefficient anywhere near that range multiplied by a covariate that
+large overflows \code{exp(eta)} to \code{Inf}/\code{0} at essentially every
+attempted starting point - \code{"Initialization failed"}. To avoid this
+regardless of covariate scale, \code{dinarch_fit_bayes()} uses its own
+data-driven default \code{init} (every non-intercept \code{beta} starts at
+exactly 0, so \code{eta_init} never depends on a covariate's raw scale;
+only the intercept and \code{phi} get a modest data-driven start,
+overridable via \code{init} in \code{...}). This prevents the hard failure, but
+for the sampler to actually mix well (and not report a large Rhat),
+still prefer transformed/rescaled covariates over raw large-magnitude
+ones - e.g. \code{~ log(population) + gdppc_thousands} rather than
+\code{~ population + gdppc}.
 }

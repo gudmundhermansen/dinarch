@@ -23,8 +23,8 @@ test_that("dinarch_transition_path handles a decreasing path (to < from)", {
   expect_equal(path, dinarch_transition_path(from = 5, to = 1, n = 10))
 })
 
-test_that("a transition path plugs directly into dinarch_simulate()'s time-varying a", {
-  a_path <- dinarch_transition_path(from = log(1), to = log(10), n = 30)
-  sim <- dinarch_simulate(n = 30, a = a_path, b = 0.2, phi = 5, seed = 1)
+test_that("a transition path plugs directly into dinarch_simulate()'s time-varying phi", {
+  phi_path <- dinarch_transition_path(from = 2, to = 20, n = 30)
+  sim <- dinarch_simulate(n = 30, b = 0.2, phi = phi_path, beta = log(3), seed = 1)
   expect_equal(nrow(sim), 30)
 })

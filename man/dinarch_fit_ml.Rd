@@ -9,66 +9,134 @@ dinarch_fit_ml(
   y = "y",
   index = "index",
   group = NULL,
-  population = NULL,
-  covariates = NULL,
-  k = 1,
-  lambda = NULL,
+  formula = ~1,
+  n_lags = 1,
   start = NULL,
-  optimizer = c("nelder-mead+bfgs", "nelder-mead"),
+  optim_method = c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B", "SANN", "Brent"),
+  refine = TRUE,
+  n_starts = 1,
+  start_jitter_sd = 0.5,
   control = list(),
-  max_restarts = 3
+  max_restarts = 3,
+  seed = NULL
 )
 }
 \arguments{
 \item{data}{A data.frame or data.table containing at least the \code{y} and
-\code{index} columns (and \code{group}/\code{population}/\code{covariates} columns if
-used).}
+\code{index} columns (and \code{group} and any variables referenced by
+\code{formula} if used).}
 
-\item{y, index, group, population}{Column names (strings) in \code{data}. \code{group}
+\item{y, index, group}{Column names (strings) in \code{data}. \code{group}
 identifies separate series (lags are never taken across a group
-boundary); if \code{NULL}, all rows are treated as one series. \code{population}
-is optional; if \code{NULL} the baseline term reduces to \code{exp(a)}.}
+boundary); if \code{NULL}, all rows are treated as one series.}
 
-\item{covariates}{Optional character vector of additional covariate
-column names in \code{data}.}
+\item{formula}{A one-sided formula specifying the linear predictor
+\code{eta} inside \code{exp(eta)} - e.g. \code{~ pop_log + gdp}, \code{~ pop_log * gdp}
+for main effects plus their interaction, \code{~ dem:pop_log} for an
+interaction only, or \code{~ 0 + pop_log} to drop the intercept. Built via
+\code{\link[stats:model.matrix]{stats::model.matrix()}}, so ordinary R formula conventions apply
+(interactions via \code{:}, \code{*}; intercept dropped via \code{- 1} or \verb{0 +}).
+Variables are resolved against \code{data}, so inline transforms like
+\code{~ log(population) + gdp} work directly. Default \code{~1} (intercept
+only, i.e. \verb{mu_t = exp(beta_0) + lag term}, the model's simplest
+case). There is no separate \code{population} argument - if \code{mu} should
+scale proportionally with population the way \code{stats::glm()}'s
+\code{offset()} scales a Poisson/NB mean, include \code{log(population)} in
+\code{formula} (a freely estimated coefficient here nests that as the
+special case where it equals 1, i.e. \code{population^1}, while also
+allowing sub/super-linear scaling if the data supports it).}
 
-\item{k}{Number of autoregressive lags.}
-
-\item{lambda}{Optional regularization strength discouraging \code{b} near its
-upper boundary and \code{phi} near 0. \code{NULL} (default) disables it.}
+\item{n_lags}{Number of autoregressive lags.}
 
 \item{start}{Optional custom starting values for the optimizer, on the
-internal unconstrained scale. If \code{NULL} (default), data-driven
-starting values are used: \code{a} is initialized from the observed
-mean(y)/mean(population) ratio (rather than a fixed value), which
-matters a lot when \code{population} is on a very different scale than
-the count series - a mismatched fixed start is a common cause of
-Nelder-Mead's simplex degenerating (\code{optim()} convergence code 10).}
+internal unconstrained scale: \code{n_lags} stick-breaking break-fraction
+logits for \code{b} (see Details), then \code{log(phi)}, then \code{ncol(Xcov)}
+values for \code{beta} (\code{Xcov} from \code{formula}), in that order. If \code{NULL}
+(default), data-driven starting values are used: the intercept
+coefficient (if \code{formula} includes one) is initialized from
+\code{log(mean(y))} (other \code{beta} entries start at 0), rather than a fixed
+value - matters when the response is far from 1 on its natural
+scale, a common cause of \code{optim()} starting far from any reasonable
+optimum.}
 
-\item{optimizer}{\code{"nelder-mead+bfgs"} (default) runs Nelder-Mead then
-refines with a BFGS pass; \code{"nelder-mead"} skips the refinement.}
+\item{optim_method}{Optimization method passed to \code{\link[stats:optim]{stats::optim()}} - any
+of \code{"Nelder-Mead"} (default), \code{"BFGS"}, \code{"CG"}, \code{"L-BFGS-B"}, \code{"SANN"},
+or \code{"Brent"}. Named \code{optim_method} rather than \code{method} so it can be
+forwarded through \code{\link[=dinarch_fit]{dinarch_fit()}}'s \code{...} without colliding with that
+function's own \code{method} argument (which picks \code{"ml"} vs \code{"bayes"}).
+\code{"Nelder-Mead"} is derivative-free and a robust default; gradient-based
+methods can be faster once near the optimum.}
+
+\item{refine}{If \code{TRUE} (default) and \code{optim_method} is not already
+\code{"BFGS"},
+follow the primary optimization with a \code{"BFGS"} polish step, keeping
+it only if it improves on the primary result. This is a standard way
+to sharpen a derivative-free search's result once it's in the basin of
+the optimum.}
+
+\item{n_starts}{Number of starting points to optimize from (default 1).
+For \code{n_starts > 1}, the first start is \code{start} (or the data-driven
+default) and the remaining \code{n_starts - 1} are \code{start} perturbed by
+Gaussian noise (\code{start_jitter_sd}) on the unconstrained scale; the
+result with the best (lowest) negative log-likelihood across all
+starts is returned. This is a standard guard against local optima -
+more valuable the more \code{n_lags} and the number of covariates grow.}
+
+\item{start_jitter_sd}{Standard deviation of the Gaussian noise used to
+perturb \code{start} for \code{n_starts > 1}. Ignored if \code{n_starts == 1}.}
 
 \item{control}{Optional list passed to \code{\link[stats:optim]{stats::optim()}}'s \code{control}
 argument (e.g. \code{list(maxit = 5000, reltol = 1e-10)}), merged over the
 package's defaults - use this to tune convergence behavior if the
 defaults struggle on a particular dataset.}
 
-\item{max_restarts}{If Nelder-Mead reports a non-zero convergence code
-(most commonly code 10, simplex degeneracy), automatically restart
-from the last result up to this many times - the standard remedy for
-this failure mode, since a degenerate simplex doesn't mean the
-optimum itself is bad, just that particular simplex shape got stuck.}
+\item{max_restarts}{If \code{optim()} reports a non-zero convergence code
+(most commonly code 10 for Nelder-Mead, simplex degeneracy),
+automatically restart from the last result up to this many times -
+the standard remedy for this failure mode, since a degenerate simplex
+doesn't mean the optimum itself is bad, just that particular simplex
+shape got stuck.}
+
+\item{seed}{Optional random seed, used only to make the \code{start_jitter_sd}
+perturbation in multi-start (\code{n_starts > 1}) reproducible.}
 }
 \value{
 An object of class \code{"dinarch_fit"}: a list with elements
-\code{method}, \code{coefficients} (\code{a}, \code{b}, \code{phi}, \code{beta}), \code{k},
-\code{population_used}, \code{covariates_used}, \code{loglik}, \code{n_obs},
-\code{convergence}, \code{optim_restarts}, and \code{call}.
+\code{method}, \code{coefficients} (\code{b}, \code{phi}, \code{beta} - \code{beta} named from
+\code{colnames(model.matrix(formula, data))}), \code{n_lags}, \code{formula}, \code{data}
+(a \code{data.table} with \code{group}, \code{index}, \code{y}, and the raw covariate
+columns \code{formula} references, for \emph{every} row of the input \code{data}
+(including the first \code{n_lags} per group, which aren't part of the
+likelihood but are needed to seed lags) - used by
+\code{\link[=dinarch_project]{dinarch_project()}} to seed forward simulation or in-sample replay
+without needing the original \code{data} again), \code{loglik}, \code{n_obs},
+\code{convergence}, \code{optim_method}, \code{optim_restarts}, \code{n_starts}, and
+\code{call}.
 }
 \description{
-Fits \deqn{\mu_t = \exp(a) \cdot population_t + \sum_{j=1}^k b_j y_{t-j}
-  + \sum_l \exp(\beta_l) covariate_{t,l}}, \deqn{y_t \sim
-  \mathrm{NegBinom}(r_t = \phi \mu_t,\; p_t = \phi/(1+\phi))}
-by maximizing the (optionally penalized) log-likelihood via
-\code{\link[stats:optim]{stats::optim()}}.
+Fits \deqn{\eta_t = \sum_j \beta_j z_{t,j}}
+\deqn{\mu_t = \exp(\eta_t) + \sum_{j=1}^k b_j y_{t-j}}
+\deqn{y_t \sim \mathrm{NegBinom}(r_t = \phi \mu_t,\; p_t = \phi/(1+\phi))}
+by maximizing the log-likelihood via \code{\link[stats:optim]{stats::optim()}}, where \code{k} above
+is \code{n_lags} below, and \eqn{z_{t,\cdot}} is the row of
+\code{stats::model.matrix(formula, data)} for observation \code{t} (see
+\code{formula} below).
+}
+\details{
+\code{b} is recovered from a stick-breaking transform: \code{n_lags}
+unconstrained values are mapped via \code{plogis()} to break fractions
+\verb{z_1, ..., z_\{n_lags\}} in \verb{(0, 1)}, and
+\verb{b_j = z_j * prod_\{i<j\}(1 - z_i)} is the fraction of a unit-length
+"stick" broken off at step \code{j}. This guarantees
+\code{sum(b) = 1 - prod_i(1 - z_i) < 1} - the model's stationarity
+condition (see \code{\link[=dinarch_simulate]{dinarch_simulate()}}) - for \emph{every} real parameter
+vector, with no infeasible region for \code{optim()} to land in.
+
+\verb{mu = exp(eta) + lag term} is strictly positive for \emph{any} real \code{eta}
+and any real covariate values in \code{formula} - \code{exp()} can't be
+negative or zero for finite input - so there is no positivity
+requirement on covariate values and no infeasible region there
+either. The log-likelihood only falls back to a \code{-1e10} hard wall for
+the residual, essentially unreachable case of floating-point
+underflow (\code{mu} or \code{phi} rounding to exactly 0).
 }

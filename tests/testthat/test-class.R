@@ -3,18 +3,18 @@
 # optimization/MCMC calls.
 
 .test_ml_fit <- {
-  sim <- dinarch_simulate(n = 200, a = log(4), b = 0.3, phi = 8, seed = 1)
+  sim <- dinarch_simulate(n = 200, b = 0.3, phi = 8, beta = log(4), seed = 1)
   dinarch_fit_ml(
     data.frame(y = sim$y, index = seq_len(200)),
-    y = "y", index = "index", k = 1
+    y = "y", index = "index", n_lags = 1
   )
 }
 
 if (requireNamespace("rstan", quietly = TRUE)) {
-  sim_bayes <- dinarch_simulate(n = 150, a = log(3), b = 0.3, phi = 6, seed = 77)
+  sim_bayes <- dinarch_simulate(n = 150, b = 0.3, phi = 6, beta = log(3), seed = 77)
   .test_bayes_fit <- suppressWarnings(dinarch_fit_bayes(
     data.frame(y = sim_bayes$y, index = seq_len(150)),
-    y = "y", index = "index", k = 1, iter = 800, chains = 2, seed = 8
+    y = "y", index = "index", n_lags = 1, iter = 800, chains = 2, seed = 8
   ))
 }
 
@@ -23,7 +23,7 @@ if (requireNamespace("rstan", quietly = TRUE)) {
 test_that("summary.dinarch_fit works for an ML fit", {
   s <- summary(.test_ml_fit)
   expect_s3_class(s, "summary.dinarch_fit")
-  expect_equal(s$coefficients$term, c("a", "b[1]", "phi"))
+  expect_equal(s$coefficients$term, c("b[1]", "phi", "(Intercept)"))
   expect_true(is.finite(s$aic) && is.finite(s$bic))
   expect_output(print(s), "DINARCH fit")
 })
@@ -42,31 +42,41 @@ test_that("simulate.dinarch_fit matches a manual dinarch_simulate() call with th
   sim1 <- simulate(.test_ml_fit, nsim = 20, seed = 99)
   sim2 <- dinarch_simulate(
     n = 20,
-    a = .test_ml_fit$coefficients$a,
     b = .test_ml_fit$coefficients$b,
     phi = .test_ml_fit$coefficients$phi,
+    beta = .test_ml_fit$coefficients$beta,
     seed = 99
   )
   expect_identical(sim1$y, sim2$y)
 })
 
-test_that("simulate.dinarch_fit warns if population was used in fitting but not supplied for simulation", {
-  sim_pop <- dinarch_simulate(
-    n = 100, a = log(0.01), b = 0.3, phi = 6,
-    population = rep(1000, 100), seed = 3
+test_that("simulate.dinarch_fit warns (then errors informatively) if the fit's formula referenced covariates not supplied for simulation", {
+  n <- 200
+  gdp <- rnorm(n)
+  sim_gdp <- dinarch_simulate(
+    n = n, b = 0.3, phi = 6,
+    formula = ~gdp, covariates = data.frame(gdp = gdp), beta = c(log(3), 0.2), seed = 3
   )
-  fit_pop <- dinarch_fit_ml(
-    data.frame(y = sim_pop$y, index = seq_len(100), population = rep(1000, 100)),
-    y = "y", index = "index", population = "population", k = 1
+  fit_gdp <- dinarch_fit_ml(
+    data.frame(y = sim_gdp$y, index = seq_len(n), gdp = gdp),
+    y = "y", index = "index", formula = ~gdp, n_lags = 1
   )
-  expect_warning(simulate(fit_pop, nsim = 10, seed = 1), "population")
+  # covariates isn't supplied, so this both warns up front (formula
+  # references gdp) and then errors from model.matrix() itself (gdp isn't
+  # resolvable - formula's environment is stripped to baseenv() precisely
+  # so this fails loudly rather than silently reusing gdp from wherever
+  # the fit's formula happened to be written).
+  expect_warning(
+    expect_error(simulate(fit_gdp, nsim = 10, seed = 1), "gdp"),
+    "gdp"
+  )
 })
 
 test_that("simulate.dinarch_fit's use_draw errors sensibly", {
   expect_error(simulate(.test_ml_fit, nsim = 5, use_draw = 1), "Bayesian")
 
   skip_if_not_installed("rstan")
-  n_draws <- length(.test_bayes_fit$posterior$a)
+  n_draws <- length(.test_bayes_fit$posterior$phi)
   expect_error(simulate(.test_bayes_fit, nsim = 5, use_draw = n_draws + 1), "use_draw")
 })
 
