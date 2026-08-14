@@ -12,8 +12,8 @@ data {
   vector<lower=0>[n_lags + 1] prior_b_alpha;
   real<lower=0> prior_phi_shape;
   real<lower=0> prior_phi_rate;
-  real prior_beta_mean;
-  real<lower=0> prior_beta_sd;
+  vector[p] prior_beta_mean;
+  vector<lower=0>[p] prior_beta_sd;
 }
 parameters {
   // b_full = (b_1, ..., b_n_lags, slack), slack = 1 - sum(b). Constraining
@@ -53,6 +53,11 @@ model {
   b_full ~ dirichlet(prior_b_alpha);
   phi ~ gamma(prior_phi_shape, prior_phi_rate);
   if (p > 0) {
+    // prior_beta_mean/sd are precomputed per-column on the R side (see
+    // dinarch_fit_bayes()): a fixed base prior on beta's *standardized*
+    // scale, divided by each Xcov column's own empirical sd, so a
+    // large-raw-scale covariate automatically gets a correspondingly
+    // tight prior instead of the same width regardless of scale.
     beta ~ normal(prior_beta_mean, prior_beta_sd);
   }
   for (n in 1:N) {
@@ -82,9 +87,10 @@ model {
 #' @inheritParams dinarch_fit_ml
 #' @param prior A list with elements `b` (shape1, shape2 - two numbers,
 #'   regardless of `n_lags`), `phi` (shape, rate for a Gamma prior), and
-#'   `beta` (mean, sd for a Normal prior, applied to every coefficient in
-#'   `beta`, including the intercept if `formula` includes one). Any
-#'   omitted elements fall back to the defaults.
+#'   `beta` (mean, sd for a Normal prior - see below for how this is
+#'   applied). Any omitted elements fall back to the defaults, which are
+#'   intended to be non-informative/weakly-informative as a standard
+#'   choice, not tuned to any particular dataset.
 #'
 #'   `b`'s two numbers parameterize a joint Dirichlet prior over
 #'   `(b_1, ..., b_{n_lags}, 1 - sum(b))` - `shape1` repeated for each of
@@ -93,10 +99,24 @@ model {
 #'   stationarity condition, see [dinarch_fit_ml()]/[dinarch_simulate()])
 #'   for every posterior draw, for any `n_lags`. At `n_lags = 1` this is
 #'   exactly a `Beta(shape1, shape2)` prior on `b` (a 2-outcome Dirichlet
-#'   is a Beta); for `n_lags > 1` it's the natural generalization that
-#'   also happens to shrink the prior mean of each individual lag
-#'   coefficient towards 0 as `n_lags` grows, since more lags are sharing
-#'   the same `sum(b) < 1` budget.
+#'   is a Beta). The default `c(1, 1)` is the flat/uniform prior on the
+#'   simplex (every point equally likely) - it still shrinks the prior
+#'   mean of each individual lag coefficient towards 0 as `n_lags` grows,
+#'   but that's a consequence of more lags sharing the same
+#'   `sum(b) < 1` budget under a uniform allocation, not of the specific
+#'   shape numbers chosen.
+#'
+#'   `beta`'s `sd` (default `2.5`, the standard weakly-informative choice
+#'   for a log-link GLM coefficient) is treated as the prior width on
+#'   *beta's standardized scale*, not applied literally to every raw
+#'   coefficient: internally it's divided by each `model.matrix(formula,
+#'   data)` column's own empirical standard deviation, so a covariate on
+#'   a large raw scale (e.g. population in the millions) automatically
+#'   gets a correspondingly tight prior on its (necessarily tiny)
+#'   coefficient, instead of the same width regardless of scale (`mean`
+#'   is divided by the same factor, so `mean = 0`, the default, stays 0).
+#'   The intercept column is constant, so it has no scale to adapt to and
+#'   keeps `c(mean, sd)` unscaled.
 #' @param iter,chains Passed to [rstan::sampling()].
 #' @param seed Optional random seed, passed to [rstan::sampling()].
 #' @param ... Further arguments passed to [rstan::sampling()] - e.g. a
@@ -115,10 +135,12 @@ model {
 #'   data-driven default `init` (every non-intercept `beta` starts at
 #'   exactly 0, so `eta_init` never depends on a covariate's raw scale;
 #'   only the intercept and `phi` get a modest data-driven start,
-#'   overridable via `init` in `...`). This prevents the hard failure, but
-#'   for the sampler to actually mix well (and not report a large Rhat),
-#'   still prefer transformed/rescaled covariates over raw large-magnitude
-#'   ones - e.g. `~ log(population) + gdppc_thousands` rather than
+#'   overridable via `init` in `...`). The default `beta` prior (see
+#'   `prior` above) is separately scaled per covariate for the same
+#'   reason - together these avoid the hard failure, but for the sampler
+#'   to actually mix well (and not report a large Rhat), still prefer
+#'   transformed/rescaled covariates over raw large-magnitude ones - e.g.
+#'   `~ log(population) + gdppc_thousands` rather than
 #'   `~ population + gdppc`.
 #'
 #' @return An object of class `"dinarch_fit"`, as for [dinarch_fit_ml()]
@@ -140,7 +162,7 @@ dinarch_fit_bayes <- function(data,
   formula <- stats::as.formula(formula)
   stopifnot(is.numeric(n_lags), length(n_lags) == 1, n_lags >= 1, n_lags == round(n_lags))
 
-  default_prior <- list(b = c(1, 3), phi = c(1, 10), beta = c(0, 3))
+  default_prior <- list(b = c(1, 1), phi = c(1, 0.05), beta = c(0, 2.5))
   prior <- utils::modifyList(default_prior, prior)
 
   # (b_1, ..., b_n_lags, slack) ~ dirichlet(c(rep(shape1, n_lags), shape2))
@@ -153,6 +175,17 @@ dinarch_fit_bayes <- function(data,
   n_beta <- prep$n_beta
   beta_names <- colnames(prep$Xcov)
 
+  # `prior$beta = c(mean, sd)` is the reference prior on beta's
+  # *standardized* scale - divide by each Xcov column's own empirical sd
+  # to get a prior of comparable width regardless of a covariate's raw
+  # scale (mean and sd divide by the same factor, so mean = 0 stays 0
+  # unaffected). The intercept column is constant (sd = 0), so it keeps
+  # the base prior unscaled - it has no covariate scale to adapt to.
+  cov_sd <- if (n_beta > 0) apply(prep$Xcov, 2, stats::sd) else numeric(0)
+  scale_factor <- ifelse(cov_sd > 0, cov_sd, 1)
+  prior_beta_mean_vec <- prior$beta[1] / scale_factor
+  prior_beta_sd_vec <- prior$beta[2] / scale_factor
+
   stan_data <- list(
     N = prep$n,
     y = prep$y_vec,
@@ -162,7 +195,11 @@ dinarch_fit_bayes <- function(data,
     Xcov = prep$Xcov,
     prior_b_alpha = prior_b_alpha_vec,
     prior_phi_shape = prior$phi[1], prior_phi_rate = prior$phi[2],
-    prior_beta_mean = prior$beta[1], prior_beta_sd = prior$beta[2]
+    # array(): avoids rstan collapsing a length-1 vector to a bare scalar,
+    # which Stan then rejects for a declared vector[p] (see the same fix
+    # for `beta_init` below).
+    prior_beta_mean = array(prior_beta_mean_vec, dim = n_beta),
+    prior_beta_sd = array(prior_beta_sd_vec, dim = n_beta)
   )
 
   stan_model_obj <- .get_dinarch_stan_model()

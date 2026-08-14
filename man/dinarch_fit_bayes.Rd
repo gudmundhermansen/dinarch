@@ -47,9 +47,10 @@ allowing sub/super-linear scaling if the data supports it).}
 
 \item{prior}{A list with elements \code{b} (shape1, shape2 - two numbers,
 regardless of \code{n_lags}), \code{phi} (shape, rate for a Gamma prior), and
-\code{beta} (mean, sd for a Normal prior, applied to every coefficient in
-\code{beta}, including the intercept if \code{formula} includes one). Any
-omitted elements fall back to the defaults.
+\code{beta} (mean, sd for a Normal prior - see below for how this is
+applied). Any omitted elements fall back to the defaults, which are
+intended to be non-informative/weakly-informative as a standard
+choice, not tuned to any particular dataset.
 
 \code{b}'s two numbers parameterize a joint Dirichlet prior over
 \verb{(b_1, ..., b_\{n_lags\}, 1 - sum(b))} - \code{shape1} repeated for each of
@@ -58,10 +59,23 @@ the \code{n_lags} lag components, \code{shape2} for the \code{(n_lags + 1)}th
 stationarity condition, see \code{\link[=dinarch_fit_ml]{dinarch_fit_ml()}}/\code{\link[=dinarch_simulate]{dinarch_simulate()}})
 for every posterior draw, for any \code{n_lags}. At \code{n_lags = 1} this is
 exactly a \code{Beta(shape1, shape2)} prior on \code{b} (a 2-outcome Dirichlet
-is a Beta); for \code{n_lags > 1} it's the natural generalization that
-also happens to shrink the prior mean of each individual lag
-coefficient towards 0 as \code{n_lags} grows, since more lags are sharing
-the same \code{sum(b) < 1} budget.}
+is a Beta). The default \code{c(1, 1)} is the flat/uniform prior on the
+simplex (every point equally likely) - it still shrinks the prior
+mean of each individual lag coefficient towards 0 as \code{n_lags} grows,
+but that's a consequence of more lags sharing the same
+\code{sum(b) < 1} budget under a uniform allocation, not of the specific
+shape numbers chosen.
+
+\code{beta}'s \code{sd} (default \code{2.5}, the standard weakly-informative choice
+for a log-link GLM coefficient) is treated as the prior width on
+\emph{beta's standardized scale}, not applied literally to every raw
+coefficient: internally it's divided by each \code{model.matrix(formula, data)} column's own empirical standard deviation, so a covariate on
+a large raw scale (e.g. population in the millions) automatically
+gets a correspondingly tight prior on its (necessarily tiny)
+coefficient, instead of the same width regardless of scale (\code{mean}
+is divided by the same factor, so \code{mean = 0}, the default, stays 0).
+The intercept column is constant, so it has no scale to adapt to and
+keeps \code{c(mean, sd)} unscaled.}
 
 \item{iter, chains}{Passed to \code{\link[rstan:stanmodel-method-sampling]{rstan::sampling()}}.}
 
@@ -94,9 +108,11 @@ regardless of covariate scale, \code{dinarch_fit_bayes()} uses its own
 data-driven default \code{init} (every non-intercept \code{beta} starts at
 exactly 0, so \code{eta_init} never depends on a covariate's raw scale;
 only the intercept and \code{phi} get a modest data-driven start,
-overridable via \code{init} in \code{...}). This prevents the hard failure, but
-for the sampler to actually mix well (and not report a large Rhat),
-still prefer transformed/rescaled covariates over raw large-magnitude
-ones - e.g. \code{~ log(population) + gdppc_thousands} rather than
+overridable via \code{init} in \code{...}). The default \code{beta} prior (see
+\code{prior} above) is separately scaled per covariate for the same
+reason - together these avoid the hard failure, but for the sampler
+to actually mix well (and not report a large Rhat), still prefer
+transformed/rescaled covariates over raw large-magnitude ones - e.g.
+\code{~ log(population) + gdppc_thousands} rather than
 \code{~ population + gdppc}.
 }

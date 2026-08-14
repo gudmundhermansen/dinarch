@@ -83,6 +83,60 @@ test_that("dinarch_fit_bayes does not fail to initialize with large-scale raw co
   expect_false(anyNA(fit$coefficients$beta))
 })
 
+test_that("a tight custom beta prior pulls the posterior toward its mean despite a strong signal", {
+  testthat::skip_if_not_installed("rstan")
+
+  n <- 300
+  gdp <- rnorm(n)
+  sim <- dinarch_simulate(n = n, b = 0.2, phi = 20, formula = ~gdp,
+                           covariates = data.frame(gdp = gdp), beta = c(log(4), 1.5), seed = 12)
+  dat <- data.frame(y = sim$y, index = seq_len(n), gdp = gdp)
+
+  fit_default <- suppressWarnings(dinarch_fit_bayes(
+    dat, y = "y", index = "index", formula = ~gdp, n_lags = 1,
+    iter = 600, chains = 2, seed = 13
+  ))
+  # a prior sd of 0.01 (on the standardized scale) is tight enough to
+  # dominate this sample size regardless of the true effect (1.5)
+  fit_tight <- suppressWarnings(dinarch_fit_bayes(
+    dat, y = "y", index = "index", formula = ~gdp, n_lags = 1,
+    prior = list(beta = c(0, 0.01)),
+    iter = 600, chains = 2, seed = 13
+  ))
+
+  gdp_default <- abs(unname(fit_default$coefficients$beta["gdp"]))
+  gdp_tight <- abs(unname(fit_tight$coefficients$beta["gdp"]))
+  expect_lt(gdp_tight, gdp_default / 2)
+  expect_lt(gdp_tight, 0.3)
+})
+
+test_that("the beta prior scales with a covariate's own units, so predictions don't depend on arbitrary rescaling", {
+  testthat::skip_if_not_installed("rstan")
+
+  n <- 200
+  pop_raw <- runif(n, 1e5, 1e6)  # e.g. population, on its natural scale
+  sim <- dinarch_simulate(n = n, b = 0.1, phi = 10, formula = ~ log(pop_raw),
+                           covariates = data.frame(pop_raw = pop_raw), beta = c(-2, 0.6), seed = 14)
+  dat <- data.frame(y = sim$y, index = seq_len(n), pop_raw = pop_raw, pop_thousands = pop_raw / 1000)
+
+  fit_raw <- suppressWarnings(dinarch_fit_bayes(
+    dat, y = "y", index = "index", formula = ~ log(pop_raw), n_lags = 1,
+    iter = 500, chains = 2, seed = 15
+  ))
+  fit_rescaled <- suppressWarnings(dinarch_fit_bayes(
+    dat, y = "y", index = "index", formula = ~ log(pop_thousands), n_lags = 1,
+    iter = 500, chains = 2, seed = 15
+  ))
+
+  # log(pop_raw) = log(pop_thousands) + log(1000): same slope on the
+  # covariate, only the intercept should differ (by beta_slope * log(1000))
+  expect_equal(
+    unname(fit_raw$coefficients$beta["log(pop_raw)"]),
+    unname(fit_rescaled$coefficients$beta["log(pop_thousands)"]),
+    tolerance = 0.15
+  )
+})
+
 test_that("dinarch_fit_bayes with a single covariate (n_beta == 1) returns the expected structure", {
   # Regression test: rep(0, 1) collapses to a bare R scalar, which Stan
   # rejects for a declared vector[1] parameter ("dims declared=(1); dims
