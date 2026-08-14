@@ -92,6 +92,79 @@
   invisible(x)
 }
 
+#' Check a vector has no missing (NA) values
+#' @noRd
+.check_no_na <- function(x, arg_name = deparse(substitute(x))) {
+  if (anyNA(x)) {
+    stop(sprintf("`%s` contains missing (NA) value(s).", arg_name))
+  }
+  invisible(x)
+}
+
+#' Check values are non-negative integers (a count series)
+#' @noRd
+.check_nonneg_integer <- function(x, arg_name = deparse(substitute(x)), tol = 1e-8) {
+  if (any(x < 0) || any(abs(x - round(x)) > tol)) {
+    stop(sprintf("`%s` must be non-negative integers (a count series).", arg_name))
+  }
+  invisible(x)
+}
+
+#' Check `index` is strictly increasing with a constant step size within
+#' each group
+#'
+#' `Y` must already be sorted by group then index (as
+#' .prepare_dinarch_data() does before calling this). Checked per group
+#' via plain vector operations (not a data.table grouped `[, ..., by=]`
+#' expression) to sidestep any risk of "no visible binding" NOTEs from
+#' NSE column references. `grouped = FALSE` (single ungrouped series,
+#' internally `group = 0L`) drops the "(group ...)" mention from error
+#' messages, since the user never supplied a `group` argument.
+#' @noRd
+.check_index_regularity <- function(Y, grouped = TRUE) {
+  for (g in unique(Y$group)) {
+    idx <- Y$index[Y$group == g]
+    if (length(idx) < 2) next
+    d <- diff(idx)
+    group_note <- if (grouped) sprintf(" (group %s)", g) else ""
+    if (any(d <= 0)) {
+      stop(sprintf(
+        "`index` must be strictly increasing%s - found a duplicate or decreasing value.",
+        group_note
+      ))
+    }
+    if (length(unique(d)) > 1) {
+      stop(sprintf(
+        "`index` must be evenly spaced with no gaps%s - found step size(s) %s.",
+        group_note, paste(sort(unique(d)), collapse = ", ")
+      ))
+    }
+  }
+  invisible(Y)
+}
+
+#' Central-difference numerical Jacobian of f: R^n -> R^m at x
+#'
+#' Per-component step size scales with `abs(x)` (relative step, floored at
+#' 1e-6) so it works reasonably across parameters of very different
+#' magnitude without per-call tuning. Used to delta-method standard errors
+#' from the internal unconstrained optimization scale to the natural
+#' (b, phi, beta) scale in dinarch_fit_ml().
+#' @noRd
+.numerical_jacobian <- function(f, x, eps = NULL) {
+  x <- as.numeric(x)
+  n <- length(x)
+  if (is.null(eps)) eps <- pmax(abs(x) * 1e-4, 1e-6)
+  f0 <- f(x)
+  J <- matrix(0, nrow = length(f0), ncol = n)
+  for (i in seq_len(n)) {
+    dx <- numeric(n)
+    dx[i] <- eps[i]
+    J[, i] <- (f(x + dx) - f(x - dx)) / (2 * eps[i])
+  }
+  J
+}
+
 #' Pick (b, phi, beta) parameters from a dinarch_fit for one simulation
 #' replicate
 #'
@@ -131,9 +204,12 @@
 #' lag history, and build the covariate design matrix.
 #'
 #' Shared data-prep pipeline for dinarch_fit_ml() and dinarch_fit_bayes():
-#' validates required columns, builds a data.table with canonical column
-#' names (group/index/y), sorts by group then index, adds n_lags
-#' within-group lag columns, drops rows with incomplete lag history, and
+#' validates required columns exist, contain no NA, that `y` is a
+#' non-negative integer count series, and that `index` is strictly
+#' increasing with a constant step size (no gaps or duplicates) within
+#' each group; builds a data.table with canonical column names
+#' (group/index/y), sorts by group then index, adds n_lags within-group
+#' lag columns, drops rows with incomplete lag history, and
 #' builds the covariate design matrix `Xcov` from `formula` via
 #' stats::model.matrix() (so intercept/interactions/dropping-the-intercept
 #' all follow ordinary R formula conventions, e.g. `~ pop_log + gdp`,
@@ -159,6 +235,11 @@
   if (!is.null(group)) required_cols <- c(required_cols, group)
   .check_columns(data, required_cols)
 
+  .check_no_na(data[[y]], y)
+  .check_no_na(data[[index]], index)
+  if (!is.null(group)) .check_no_na(data[[group]], group)
+  .check_nonneg_integer(data[[y]], y)
+
   Y <- data.table::data.table(
     orig_row = seq_len(nrow(data)),
     group = if (!is.null(group)) data[[group]] else 0L,
@@ -167,6 +248,7 @@
   )
 
   data.table::setorderv(Y, c("group", "index"))
+  .check_index_regularity(Y, grouped = !is.null(group))
 
   cov_vars <- all.vars(formula)
   missing_cov_vars <- setdiff(cov_vars, names(data))
@@ -177,6 +259,7 @@
     ))
   }
   for (v in cov_vars) {
+    .check_no_na(data[[v]], v)
     Y[, (v) := data[[v]][orig_row]]
   }
   full_data <- Y[, !"orig_row", with = FALSE]

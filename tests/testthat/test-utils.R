@@ -44,6 +44,29 @@ test_that(".check_unit_interval and .check_positive validate ranges", {
   expect_error(.check_positive(c(1, -1)), "positive")
 })
 
+test_that(".check_no_na and .check_nonneg_integer validate y-like inputs", {
+  expect_silent(.check_no_na(c(1, 2, 3)))
+  expect_error(.check_no_na(c(1, NA, 3)), "missing")
+
+  expect_silent(.check_nonneg_integer(c(0, 1, 5)))
+  expect_error(.check_nonneg_integer(c(1, -2, 3)), "non-negative integers")
+  expect_error(.check_nonneg_integer(c(1, 2.5, 3)), "non-negative integers")
+})
+
+test_that(".check_index_regularity accepts evenly-spaced index per group and rejects gaps/duplicates/decreases", {
+  ok <- data.table::data.table(group = c(1, 1, 1, 2, 2), index = c(1, 2, 3, 10, 12))
+  expect_silent(.check_index_regularity(ok))  # group 2's own step (2) just needs to be constant
+
+  gap <- data.table::data.table(group = c(1, 1, 1), index = c(1, 2, 4))
+  expect_error(.check_index_regularity(gap), "evenly spaced")
+
+  dup <- data.table::data.table(group = c(1, 1, 1), index = c(1, 2, 2))
+  expect_error(.check_index_regularity(dup), "strictly increasing")
+
+  decreasing <- data.table::data.table(group = c(1, 1, 1), index = c(1, 3, 2))
+  expect_error(.check_index_regularity(decreasing), "strictly increasing")
+})
+
 test_that(".prepare_dinarch_data builds correct defaults with no group and formula = ~1", {
   dat <- data.frame(y = c(5, 6, 7, 8), t = 1:4)
   prep <- .prepare_dinarch_data(dat, y = "y", index = "t", group = NULL,
@@ -110,4 +133,68 @@ test_that(".prepare_dinarch_data errors on missing columns, empty results, and b
     .prepare_dinarch_data(dat, y = "y", index = "t", group = NULL,
                            formula = ~nonexistent, n_lags = 1)
   )
+})
+
+test_that(".prepare_dinarch_data errors on NA in y/index/group/covariates", {
+  base <- data.frame(y = 1:5, t = 1:5, grp = "A", gdp = c(1, 2, 3, 4, 5))
+
+  dat_na_y <- base; dat_na_y$y[3] <- NA
+  expect_error(
+    .prepare_dinarch_data(dat_na_y, y = "y", index = "t", group = NULL, formula = ~1, n_lags = 1),
+    "missing"
+  )
+
+  dat_na_t <- base; dat_na_t$t[3] <- NA
+  expect_error(
+    .prepare_dinarch_data(dat_na_t, y = "y", index = "t", group = NULL, formula = ~1, n_lags = 1),
+    "missing"
+  )
+
+  dat_na_grp <- base; dat_na_grp$grp[3] <- NA
+  expect_error(
+    .prepare_dinarch_data(dat_na_grp, y = "y", index = "t", group = "grp", formula = ~1, n_lags = 1),
+    "missing"
+  )
+
+  dat_na_gdp <- base; dat_na_gdp$gdp[3] <- NA
+  expect_error(
+    .prepare_dinarch_data(dat_na_gdp, y = "y", index = "t", group = NULL, formula = ~gdp, n_lags = 1),
+    "missing"
+  )
+})
+
+test_that(".prepare_dinarch_data errors on non-count y and on irregular index", {
+  dat_negative <- data.frame(y = c(1, -2, 3), t = 1:3)
+  expect_error(
+    .prepare_dinarch_data(dat_negative, y = "y", index = "t", group = NULL, formula = ~1, n_lags = 1),
+    "non-negative integers"
+  )
+
+  dat_fractional <- data.frame(y = c(1, 2.5, 3), t = 1:3)
+  expect_error(
+    .prepare_dinarch_data(dat_fractional, y = "y", index = "t", group = NULL, formula = ~1, n_lags = 1),
+    "non-negative integers"
+  )
+
+  dat_gap <- data.frame(y = 1:4, t = c(1, 2, 4, 5))  # skips 3
+  expect_error(
+    .prepare_dinarch_data(dat_gap, y = "y", index = "t", group = NULL, formula = ~1, n_lags = 1),
+    "evenly spaced"
+  )
+
+  dat_dup <- data.frame(y = 1:4, t = c(1, 2, 2, 3))
+  expect_error(
+    .prepare_dinarch_data(dat_dup, y = "y", index = "t", group = NULL, formula = ~1, n_lags = 1),
+    "strictly increasing"
+  )
+})
+
+test_that("groups may each have their own (internally constant) index step size", {
+  dat <- data.frame(
+    y   = c(1, 2, 3, 4, 5, 6),
+    t   = c(2000, 2001, 2002, 5, 10, 15),  # group A: annual; group B: step of 5
+    grp = c("A", "A", "A", "B", "B", "B")
+  )
+  prep <- .prepare_dinarch_data(dat, y = "y", index = "t", group = "grp", formula = ~1, n_lags = 1)
+  expect_equal(prep$n, 4)  # one row lost per group
 })

@@ -1,0 +1,86 @@
+---
+title: "Getting started with dinarch"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting started with dinarch}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+```{r setup}
+library(dinarch)
+```
+
+`dinarch` fits Dynamic Innovation Negative Binomial ARCH (NB-DINARCH) models
+to count time series: an autoregressive negative-binomial model where the
+mean depends on past counts and, optionally, covariates.
+
+## Simulate some data
+
+`dinarch_simulate()` generates a count series with a given autoregressive
+coefficient `b`, dispersion `phi`, and (optionally) covariate effects
+specified via a model formula.
+
+```{r}
+set.seed(2)
+n <- 200
+gdp <- rnorm(n)
+
+sim <- dinarch_simulate(
+  n = n, b = 0.3, phi = 8,
+  formula = ~gdp, covariates = data.frame(gdp = gdp),
+  beta = c(log(4), 0.5),
+  seed = 2
+)
+
+dat <- data.frame(y = sim$y, index = sim$index, gdp = gdp)
+head(dat)
+```
+
+## Fit the model
+
+`dinarch_fit_ml()` fits the model by maximum likelihood. `formula` specifies
+how covariates enter the mean (here, a single `gdp` effect plus an
+intercept); `n_lags` sets the number of autoregressive lags.
+
+```{r}
+fit <- dinarch_fit_ml(dat, y = "y", index = "index", formula = ~gdp, n_lags = 1)
+fit
+summary(fit)
+```
+
+`summary()` reports standard errors and confidence intervals alongside the
+point estimates.
+
+## Forecast forward
+
+`dinarch_project()` simulates forward from a fitted model - `horizon` sets
+how many periods ahead, `nsim` how many stochastic replicates to draw.
+Covariates are held fixed at their last observed value by default.
+
+```{r}
+forecast <- dinarch_project(fit, horizon = 10, nsim = 200, seed = 2)
+head(forecast)
+
+# median and a 90% interval per forecast period
+agg <- forecast[, .(
+  median = median(y),
+  lo90 = quantile(y, 0.05),
+  hi90 = quantile(y, 0.95)
+), by = index]
+agg
+```
+
+Calling `dinarch_project()` with `horizon = NULL` instead replays the fitted
+model in-sample, which is useful as a quick check that the fitted dynamics
+look reasonable against the data the model was fit to.
+
+## Bayesian estimation
+
+`dinarch_fit_bayes()` fits the same model via Stan/HMC instead of maximum
+likelihood (requires the `rstan` package), and works as a drop-in
+replacement for `dinarch_fit_ml()` in the calls above.

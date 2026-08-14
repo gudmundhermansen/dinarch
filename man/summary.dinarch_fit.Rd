@@ -9,8 +9,9 @@
 \arguments{
 \item{object}{A \code{"dinarch_fit"} object.}
 
-\item{level}{Credible interval level for Bayesian fits (ignored for ML
-fits, which do not currently report uncertainty - see Details).}
+\item{level}{Interval level: posterior credible interval for Bayesian
+fits, Wald (normal-approximation) confidence interval for ML fits
+when standard errors are available (see Details).}
 
 \item{...}{Unused.}
 }
@@ -21,8 +22,12 @@ An object of class \code{"summary.dinarch_fit"}.
 Summarize a DINARCH fit
 }
 \details{
-ML fits do not yet report standard errors (no Hessian is
-currently computed by \code{\link[=dinarch_fit_ml]{dinarch_fit_ml()}}), only point estimates plus
-log-likelihood/AIC/BIC. Bayesian fits report posterior means with
-credible intervals computed from the stored posterior draws.
+ML fits report standard errors and Wald confidence intervals
+when \code{object$se} is available (the default - see
+\code{\link[=dinarch_fit_ml]{dinarch_fit_ml()}}'s \code{vcov} argument and Details for how these are
+computed, and their limitations near a boundary or in small
+samples); if \code{vcov = FALSE} was used, or the Hessian was singular at
+the optimum, only point estimates are shown. Bayesian fits report
+posterior means with credible intervals computed from the stored
+posterior draws.
 }

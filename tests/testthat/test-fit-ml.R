@@ -55,7 +55,10 @@ test_that("formula = ~0 + ... drops the intercept", {
   cov_a <- runif(n, 1, 3)
   dat <- data.frame(y = rpois(n, 3), index = seq_len(n), cov_a = cov_a)
 
-  fit <- dinarch_fit_ml(dat, y = "y", index = "index", formula = ~ 0 + cov_a, n_lags = 1)
+  # vcov = FALSE: cov_a alone explaining the entire baseline (no intercept)
+  # against unrelated random y is a poorly-conditioned fit - irrelevant to
+  # what this test checks (that the intercept is dropped from beta's names).
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", formula = ~ 0 + cov_a, n_lags = 1, vcov = FALSE)
 
   expect_identical(names(fit$coefficients$beta), "cov_a")
 })
@@ -98,7 +101,10 @@ test_that("dinarch_fit_ml converges for high n_lags instead of getting stuck at 
   sim <- dinarch_simulate(n = n, b = true_b, phi = 6, beta = log(3), seed = 7)
   dat <- data.frame(y = sim$y, index = seq_len(n))
 
-  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = n_lags)
+  # vcov = FALSE: 6 collinear lags on modest n is a poorly-conditioned fit
+  # for a Hessian (most individual b_j aren't well identified) - unrelated
+  # to what this test checks (that the optimizer isn't stuck at the start).
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = n_lags, vcov = FALSE)
 
   expect_lt(sum(fit$coefficients$b), 1)
   # sum(b) is much better identified than the individual b_j with 6
@@ -146,9 +152,72 @@ test_that("a mis-sized `start` raises an informative error", {
   )
 })
 
+test_that("dinarch_fit_ml reports standard errors that shrink like 1/sqrt(n) and cover the truth", {
+  true_beta <- c(log(4), 0.5)
+  true_b    <- 0.3
+  true_phi  <- 8
+
+  fit_small <- {
+    gdp <- rnorm(300)
+    sim <- dinarch_simulate(n = 300, b = true_b, phi = true_phi, formula = ~gdp,
+                             covariates = data.frame(gdp = gdp), beta = true_beta, seed = 1)
+    dinarch_fit_ml(data.frame(y = sim$y, index = sim$index, gdp = gdp),
+                    y = "y", index = "index", formula = ~gdp, n_lags = 1)
+  }
+  fit_large <- {
+    gdp <- rnorm(3000)
+    sim <- dinarch_simulate(n = 3000, b = true_b, phi = true_phi, formula = ~gdp,
+                             covariates = data.frame(gdp = gdp), beta = true_beta, seed = 1)
+    dinarch_fit_ml(data.frame(y = sim$y, index = sim$index, gdp = gdp),
+                    y = "y", index = "index", formula = ~gdp, n_lags = 1)
+  }
+
+  expect_false(anyNA(unlist(fit_small$se)))
+  expect_true(all(diag(fit_small$vcov) >= 0))
+  expect_identical(rownames(fit_small$vcov), c("b[1]", "phi", "(Intercept)", "gdp"))
+
+  # 10x the data should shrink SEs by roughly sqrt(10) =~ 3.16x
+  expect_lt(fit_large$se$b, fit_small$se$b / 2)
+  expect_lt(unname(fit_large$se$beta["gdp"]), unname(fit_small$se$beta["gdp"]) / 2)
+
+  # true b within a 99% Wald interval built from the point estimate/se
+  z <- stats::qnorm(0.995)
+  expect_true(abs(fit_large$coefficients$b - true_b) < z * fit_large$se$b)
+})
+
+test_that("vcov = FALSE skips SE computation", {
+  dat <- data.frame(y = rpois(50, 3), index = 1:50)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
+
+  expect_null(fit$vcov)
+  expect_true(all(is.na(unlist(fit$se))))
+})
+
+test_that("summary.dinarch_fit shows Wald CIs for ML fits with se, and falls back cleanly without", {
+  # Genuine AR structure (not iid rpois()) so b sits away from the b = 0
+  # boundary, keeping the Hessian well-conditioned.
+  n <- 300
+  sim <- dinarch_simulate(n = n, b = 0.3, phi = 8, beta = log(4), seed = 1)
+  dat <- data.frame(y = sim$y, index = seq_len(n))
+
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1)
+  s <- summary(fit)
+  expect_true(all(c("se", "lower", "upper") %in% names(s$coefficients)))
+  expect_true(all(s$coefficients$lower <= s$coefficients$estimate))
+  expect_true(all(s$coefficients$estimate <= s$coefficients$upper))
+  expect_output(print(s), "Wald confidence interval")
+
+  fit_no_se <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
+  s_no_se <- summary(fit_no_se)
+  expect_false("se" %in% names(s_no_se$coefficients))
+  expect_output(print(s_no_se), "standard errors unavailable")
+})
+
 test_that("print and coef methods work on a dinarch_fit object", {
   dat <- data.frame(y = rpois(50, 3), index = 1:50)
-  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1)
+  # vcov = FALSE: iid data pushes b to its 0 boundary, a poorly-conditioned
+  # Hessian irrelevant to what this test checks.
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
 
   expect_output(print(fit), "dinarch_fit")
   expect_identical(coef(fit), fit$coefficients)

@@ -18,7 +18,8 @@ dinarch_fit_ml(
   start_jitter_sd = 0.5,
   control = list(),
   max_restarts = 3,
-  seed = NULL
+  seed = NULL,
+  vcov = TRUE
 )
 }
 \arguments{
@@ -99,11 +100,20 @@ shape got stuck.}
 
 \item{seed}{Optional random seed, used only to make the \code{start_jitter_sd}
 perturbation in multi-start (\code{n_starts > 1}) reproducible.}
+
+\item{vcov}{If \code{TRUE} (default), compute a variance-covariance matrix
+for \verb{(b, phi, beta)} at the optimum (see Details) - set \code{FALSE} to
+skip this (fitting is unaffected either way; this only controls
+whether the follow-up Hessian/Jacobian computation runs).}
 }
 \value{
 An object of class \code{"dinarch_fit"}: a list with elements
 \code{method}, \code{coefficients} (\code{b}, \code{phi}, \code{beta} - \code{beta} named from
-\code{colnames(model.matrix(formula, data))}), \code{n_lags}, \code{formula}, \code{data}
+\code{colnames(model.matrix(formula, data))}), \code{se} (standard errors, same
+shape as \code{coefficients}; \code{NA} if \code{vcov = FALSE} or the Hessian was
+singular), \code{vcov} (the full variance-covariance matrix, row/column
+names \code{"b[1]"}, ..., \code{"phi"}, the \code{beta} names; \code{NULL} if
+\code{vcov = FALSE}), \code{n_lags}, \code{formula}, \code{data}
 (a \code{data.table} with \code{group}, \code{index}, \code{y}, and the raw covariate
 columns \code{formula} references, for \emph{every} row of the input \code{data}
 (including the first \code{n_lags} per group, which aren't part of the
@@ -139,4 +149,17 @@ requirement on covariate values and no infeasible region there
 either. The log-likelihood only falls back to a \code{-1e10} hard wall for
 the residual, essentially unreachable case of floating-point
 underflow (\code{mu} or \code{phi} rounding to exactly 0).
+
+Standard errors (\code{vcov = TRUE}, the default) are computed by
+numerically differentiating the negative log-likelihood twice at the
+optimum, on the internal unconstrained scale the optimizer actually
+used (\code{\link[stats:optim]{stats::optimHess()}}), inverting that Hessian, and then
+delta-method-transforming the result to the natural \verb{(b, phi, beta)}
+scale reported in \code{coefficients} (via a numerical Jacobian of the
+\verb{par -> (b, phi, beta)} mapping). This is the standard asymptotic
+(Wald) approximation - treat it cautiously for small samples or when
+estimates sit near a boundary (\code{sum(b)} close to \code{1}, \code{phi} close to
+\code{0}), where the normal approximation underlying it is least reliable.
+If the Hessian isn't invertible at the reported optimum, \code{vcov}/\code{se}
+are \code{NA} with a warning, rather than failing the fit.
 }

@@ -76,6 +76,10 @@
 #'   shape got stuck.
 #' @param seed Optional random seed, used only to make the `start_jitter_sd`
 #'   perturbation in multi-start (`n_starts > 1`) reproducible.
+#' @param vcov If `TRUE` (default), compute a variance-covariance matrix
+#'   for `(b, phi, beta)` at the optimum (see Details) - set `FALSE` to
+#'   skip this (fitting is unaffected either way; this only controls
+#'   whether the follow-up Hessian/Jacobian computation runs).
 #'
 #' @details `b` is recovered from a stick-breaking transform: `n_lags`
 #'   unconstrained values are mapped via `plogis()` to break fractions
@@ -94,9 +98,26 @@
 #'   the residual, essentially unreachable case of floating-point
 #'   underflow (`mu` or `phi` rounding to exactly 0).
 #'
+#'   Standard errors (`vcov = TRUE`, the default) are computed by
+#'   numerically differentiating the negative log-likelihood twice at the
+#'   optimum, on the internal unconstrained scale the optimizer actually
+#'   used ([stats::optimHess()]), inverting that Hessian, and then
+#'   delta-method-transforming the result to the natural `(b, phi, beta)`
+#'   scale reported in `coefficients` (via a numerical Jacobian of the
+#'   `par -> (b, phi, beta)` mapping). This is the standard asymptotic
+#'   (Wald) approximation - treat it cautiously for small samples or when
+#'   estimates sit near a boundary (`sum(b)` close to `1`, `phi` close to
+#'   `0`), where the normal approximation underlying it is least reliable.
+#'   If the Hessian isn't invertible at the reported optimum, `vcov`/`se`
+#'   are `NA` with a warning, rather than failing the fit.
+#'
 #' @return An object of class `"dinarch_fit"`: a list with elements
 #'   `method`, `coefficients` (`b`, `phi`, `beta` - `beta` named from
-#'   `colnames(model.matrix(formula, data))`), `n_lags`, `formula`, `data`
+#'   `colnames(model.matrix(formula, data))`), `se` (standard errors, same
+#'   shape as `coefficients`; `NA` if `vcov = FALSE` or the Hessian was
+#'   singular), `vcov` (the full variance-covariance matrix, row/column
+#'   names `"b[1]"`, ..., `"phi"`, the `beta` names; `NULL` if
+#'   `vcov = FALSE`), `n_lags`, `formula`, `data`
 #'   (a `data.table` with `group`, `index`, `y`, and the raw covariate
 #'   columns `formula` references, for *every* row of the input `data`
 #'   (including the first `n_lags` per group, which aren't part of the
@@ -118,9 +139,11 @@ dinarch_fit_ml <- function(data,
                             start_jitter_sd = 0.5,
                             control = list(),
                             max_restarts = 3,
-                            seed = NULL) {
+                            seed = NULL,
+                            vcov = TRUE) {
 
   optim_method <- match.arg(optim_method)
+  stopifnot(is.logical(vcov), length(vcov) == 1, !is.na(vcov))
   formula <- stats::as.formula(formula)
   stopifnot(is.numeric(n_lags), length(n_lags) == 1, n_lags >= 1, n_lags == round(n_lags))
   stopifnot(is.numeric(n_starts), length(n_starts) == 1, n_starts >= 1, n_starts == round(n_starts))
@@ -274,10 +297,60 @@ dinarch_fit_ml <- function(data,
   final <- unpack(fit$par)
   names(final$beta) <- beta_names
 
+  # --- standard errors: Hessian on the internal (unconstrained) scale,
+  # delta-method-transformed to the natural (b, phi, beta) scale reported
+  # in `coefficients` - see Details. --------------------------------------
+  coef_names <- c(paste0("b[", seq_len(n_lags), "]"), "phi", beta_names)
+  vcov_mat <- NULL
+  se <- list(b = rep(NA_real_, n_lags), phi = NA_real_,
+             beta = stats::setNames(rep(NA_real_, n_beta), beta_names))
+
+  if (vcov) {
+    H <- tryCatch(stats::optimHess(fit$par, neg_loglik), error = function(e) NULL)
+    vcov_par <- if (!is.null(H)) tryCatch(solve(H), error = function(e) NULL) else NULL
+
+    if (is.null(vcov_par)) {
+      warning(
+        "Could not compute the Hessian/variance-covariance matrix at the ",
+        "optimum (likely a near-singular or poorly identified fit) - ",
+        "`vcov`/`se` will be NA. Consider more data, a larger `n_starts`, ",
+        "or checking `convergence`."
+      )
+    } else {
+      J <- .numerical_jacobian(function(p) {
+        u <- unpack(p)
+        c(u$b, u$phi, u$beta)
+      }, fit$par)
+      vcov_natural <- J %*% vcov_par %*% t(J)
+      dimnames(vcov_natural) <- list(coef_names, coef_names)
+
+      diag_var <- diag(vcov_natural)
+      if (any(diag_var < 0)) {
+        warning(
+          "Some variance estimates came out negative (a numerically ",
+          "singular Hessian, often from a fit near a boundary, e.g. ",
+          "sum(b) close to 1 or phi close to 0) - those standard errors ",
+          "are reported as NA."
+        )
+        diag_var[diag_var < 0] <- NA_real_
+      }
+      se_all <- sqrt(diag_var)
+
+      vcov_mat <- vcov_natural
+      se <- list(
+        b = unname(se_all[seq_len(n_lags)]),
+        phi = unname(se_all[n_lags + 1L]),
+        beta = stats::setNames(se_all[n_lags + 1L + seq_len(n_beta)], beta_names)
+      )
+    }
+  }
+
   structure(
     list(
       method = "ml",
       coefficients = list(b = final$b, phi = final$phi, beta = final$beta),
+      se = se,
+      vcov = vcov_mat,
       n_lags = n_lags,
       formula = formula,
       data = prep$full_data,

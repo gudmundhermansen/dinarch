@@ -26,14 +26,19 @@ coef.dinarch_fit <- function(object, ...) {
 #' Summarize a DINARCH fit
 #'
 #' @param object A `"dinarch_fit"` object.
-#' @param level Credible interval level for Bayesian fits (ignored for ML
-#'   fits, which do not currently report uncertainty - see Details).
+#' @param level Interval level: posterior credible interval for Bayesian
+#'   fits, Wald (normal-approximation) confidence interval for ML fits
+#'   when standard errors are available (see Details).
 #' @param ... Unused.
 #'
-#' @details ML fits do not yet report standard errors (no Hessian is
-#'   currently computed by [dinarch_fit_ml()]), only point estimates plus
-#'   log-likelihood/AIC/BIC. Bayesian fits report posterior means with
-#'   credible intervals computed from the stored posterior draws.
+#' @details ML fits report standard errors and Wald confidence intervals
+#'   when `object$se` is available (the default - see
+#'   [dinarch_fit_ml()]'s `vcov` argument and Details for how these are
+#'   computed, and their limitations near a boundary or in small
+#'   samples); if `vcov = FALSE` was used, or the Hessian was singular at
+#'   the optimum, only point estimates are shown. Bayesian fits report
+#'   posterior means with credible intervals computed from the stored
+#'   posterior draws.
 #'
 #' @return An object of class `"summary.dinarch_fit"`.
 #' @export
@@ -51,8 +56,9 @@ summary.dinarch_fit <- function(object, level = 0.95, ...) {
     object$coefficients$beta
   )
 
+  alpha <- 1 - level
+
   if (identical(object$method, "bayes") && !is.null(object$posterior)) {
-    alpha <- 1 - level
     probs <- c(alpha / 2, 1 - alpha / 2)
 
     post_mat <- cbind(
@@ -65,6 +71,15 @@ summary.dinarch_fit <- function(object, level = 0.95, ...) {
     coef_table <- data.frame(
       term = coef_names, estimate = estimate,
       lower = ci[, 1], upper = ci[, 2],
+      row.names = NULL
+    )
+  } else if (!is.null(object$se) &&
+             !all(is.na(c(object$se$b, object$se$phi, object$se$beta)))) {
+    se_vec <- c(object$se$b, object$se$phi, object$se$beta)
+    z <- stats::qnorm(1 - alpha / 2)
+    coef_table <- data.frame(
+      term = coef_names, estimate = estimate, se = se_vec,
+      lower = estimate - z * se_vec, upper = estimate + z * se_vec,
       row.names = NULL
     )
   } else {
@@ -95,6 +110,11 @@ print.summary.dinarch_fit <- function(x, ...) {
 
   if (identical(x$method, "ml")) {
     cat(sprintf("Log-likelihood: %.2f   AIC: %.2f   BIC: %.2f\n", x$loglik, x$aic, x$bic))
+    if ("se" %in% names(x$coefficients)) {
+      cat(sprintf("%.0f%% Wald confidence intervals shown (normal approximation).\n", 100 * x$level))
+    } else {
+      cat("Note: standard errors unavailable (vcov = FALSE, or a singular Hessian at the optimum).\n")
+    }
     if (!is.na(x$convergence) && x$convergence != 0) {
       cat("Note: optimizer did not report successful convergence.\n")
     }

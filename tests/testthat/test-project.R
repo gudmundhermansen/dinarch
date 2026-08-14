@@ -2,7 +2,7 @@ test_that("dinarch_fit_ml() stores $data with full per-group history, including 
   n <- 50
   gdp <- rnorm(n)
   dat <- data.frame(y = rpois(n, 3), index = seq_len(n), gdp = gdp)
-  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 2, formula = ~gdp)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 2, formula = ~gdp, vcov = FALSE)
 
   expect_s3_class(fit$data, "data.table")
   expect_equal(nrow(fit$data), n)  # all rows, including the first n_lags
@@ -31,7 +31,7 @@ test_that("dinarch_project() out-of-sample: default holds last covariate row fix
 test_that("dinarch_project() in-sample: unconditional replay covers n - n_lags periods per group, starting after the seed", {
   n <- 60
   dat <- data.frame(y = rpois(n, 4), index = seq_len(n))
-  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 2)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 2, vcov = FALSE)
 
   proj <- dinarch_project(fit, horizon = NULL, nsim = 1, seed = 1)
 
@@ -74,7 +74,7 @@ test_that("dinarch_project() new_data overrides covariates only for matching (gr
 test_that("dinarch_project() new_para overrides b/phi only for matching (group, index)", {
   n <- 50
   dat <- data.frame(y = rpois(n, 4), index = seq_len(n))
-  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
 
   # phi = 10000 (near-deterministic) forces mu very close to y for periods
   # covered by new_para, and mu = exp(beta_0) + b1 * y_lag with b1 = 0
@@ -89,7 +89,7 @@ test_that("dinarch_project() new_para overrides b/phi only for matching (group, 
 test_that("dinarch_project() nsim replicates vary stochastically", {
   n <- 50
   dat <- data.frame(y = rpois(n, 5), index = seq_len(n))
-  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
 
   proj <- dinarch_project(fit, horizon = 10, nsim = 5, seed = 1)
   by_sim <- split(proj$y, proj$sim)
@@ -123,7 +123,7 @@ test_that("dinarch_project() validates group/index columns in new_data and new_p
 test_that("dinarch_project() warns when new_data/new_para don't match the simulated window", {
   n <- 40
   dat <- data.frame(y = rpois(n, 4), index = seq_len(n))
-  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
 
   expect_warning(
     dinarch_project(fit, horizon = 3, new_data = data.frame(index = 9999, gdp = 1)),
@@ -153,7 +153,7 @@ test_that("dinarch_project() Bayesian use_draw = 'random' varies parameters acro
 test_that("dinarch_project() errors informatively on a fit without stored $data", {
   n <- 30
   dat <- data.frame(y = rpois(n, 3), index = seq_len(n))
-  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
   fit$data <- NULL
 
   expect_error(dinarch_project(fit, horizon = 3), "no stored")

@@ -13,7 +13,7 @@ test_that("dinarch_fit(method = 'ml') matches dinarch_fit_ml() directly", {
 
 test_that("dinarch_fit() defaults to method = 'ml'", {
   dat <- data.frame(y = rpois(100, 3), index = 1:100)
-  fit <- dinarch_fit(dat, y = "y", index = "index", n_lags = 1)
+  fit <- dinarch_fit(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
   expect_equal(fit$method, "ml")
 })
 
