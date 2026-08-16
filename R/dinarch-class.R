@@ -194,3 +194,53 @@ simulate.dinarch_fit <- function(object, nsim = 10, seed = NULL,
     seed = seed
   )
 }
+
+#' Predict from a fitted DINARCH model
+#'
+#' Draws `nsim` samples from the model's predictive distribution via
+#' [dinarch_project()] - a thin wrapper exposing only the arguments that
+#' are reasonable to change for genuine prediction (as opposed to
+#' constructing a scenario). Each replicate is one draw of the future (or,
+#' with `horizon = NULL`, in-sample) path, combining parameter uncertainty
+#' (via `use_draw`, for Bayesian fits) with observation-level
+#' negative-binomial noise. Summarize the result with
+#' [summary.dinarch_project()] for a compact mean/prediction-interval
+#' table, or pass it to [plot()] directly.
+#'
+#' [dinarch_project()]'s `new_para` (per-period `b`/`phi`/`beta`
+#' overrides, e.g. from [dinarch_transition_new_para()] or
+#' [dinarch_transition_path()]) and `y_threshold` (a rolling-window
+#' escalation cap) both describe *scenario* constructions
+#' rather than draws from the fitted model's own predictive distribution,
+#' so they are not named arguments here - call [dinarch_project()]
+#' directly if you need them (they can still be passed through `...`).
+#'
+#' @param object A `"dinarch_fit"` object.
+#' @param horizon `NULL` (default) predicts in-sample; a positive integer
+#'   forecasts that many periods ahead - see [dinarch_project()].
+#' @param nsim Number of predictive draws. Default 1000 (higher than
+#'   [dinarch_project()]'s default of 1, since the point of `predict()` is
+#'   to characterize the predictive distribution).
+#' @param new_data Optional forward/alternative covariate values - see
+#'   [dinarch_project()].
+#' @param use_draw For Bayesian fits: `NULL` (default) uses the posterior
+#'   mean for every replicate; `"random"` samples a fresh posterior draw
+#'   per replicate, propagating full posterior uncertainty into the
+#'   predictive draws on top of the observation-level noise; an integer
+#'   pins one specific draw for every replicate. Must stay `NULL` for ML
+#'   fits (any other value errors - there is no posterior to draw from).
+#' @param seed Optional random seed.
+#' @param ... Passed through to [dinarch_project()] (e.g. `new_para`,
+#'   `y_threshold`, for scenario-style overrides).
+#'
+#' @return A `data.table` (also classed `"dinarch_project"`, so [plot()]
+#'   and [summary.dinarch_project()] both work on it directly), one row
+#'   per `(group, index, sim)` predictive draw.
+#' @export
+predict.dinarch_fit <- function(object, horizon = NULL, nsim = 1000, new_data = NULL,
+                                 use_draw = NULL, seed = NULL, ...) {
+  dinarch_project(
+    object, horizon = horizon, nsim = nsim, new_data = new_data,
+    use_draw = use_draw, seed = seed, ...
+  )
+}

@@ -53,6 +53,20 @@ test_that(".check_no_na and .check_nonneg_integer validate y-like inputs", {
   expect_error(.check_nonneg_integer(c(1, 2.5, 3)), "non-negative integers")
 })
 
+test_that(".check_has_variation rejects a constant series", {
+  expect_silent(.check_has_variation(c(0, 1, 0, 2)))
+  expect_error(.check_has_variation(c(0, 0, 0)), "constant")
+  expect_error(.check_has_variation(c(3, 3, 3)), "constant")
+})
+
+test_that(".prepare_dinarch_data errors when y is constant (e.g. all zero)", {
+  dat <- data.frame(y = rep(0, 30), index = seq_len(30))
+  expect_error(
+    dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1),
+    "constant"
+  )
+})
+
 test_that(".check_index_regularity accepts evenly-spaced index per group and rejects gaps/duplicates/decreases", {
   ok <- data.table::data.table(group = c(1, 1, 1, 2, 2), index = c(1, 2, 3, 10, 12))
   expect_silent(.check_index_regularity(ok))  # group 2's own step (2) just needs to be constant

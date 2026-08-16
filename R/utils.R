@@ -110,6 +110,23 @@
   invisible(x)
 }
 
+#' Check a series isn't constant (e.g. all zero) - a degenerate series
+#' with no variation for the model to fit
+#'
+#' Only applies once there's more than one observation - a single-row
+#' series is trivially "constant" but that's a distinct, more informative
+#' error case (not enough data for any `n_lags`), raised separately.
+#' @noRd
+.check_has_variation <- function(x, arg_name = deparse(substitute(x))) {
+  if (length(x) > 1 && length(unique(x)) <= 1) {
+    stop(sprintf(
+      "`%s` is constant (every value is %s) - there is nothing to fit.",
+      arg_name, format(x[1])
+    ))
+  }
+  invisible(x)
+}
+
 #' Check `index` is strictly increasing with a constant step size within
 #' each group
 #'
@@ -205,9 +222,10 @@
 #'
 #' Shared data-prep pipeline for dinarch_fit_ml() and dinarch_fit_bayes():
 #' validates required columns exist, contain no NA, that `y` is a
-#' non-negative integer count series, and that `index` is strictly
-#' increasing with a constant step size (no gaps or duplicates) within
-#' each group; builds a data.table with canonical column names
+#' non-negative integer count series with some variation (not every value
+#' identical, e.g. all zero - there would be nothing to fit), and that
+#' `index` is strictly increasing with a constant step size (no gaps or
+#' duplicates) within each group; builds a data.table with canonical column names
 #' (group/index/y), sorts by group then index, adds n_lags within-group
 #' lag columns, drops rows with incomplete lag history, and
 #' builds the covariate design matrix `Xcov` from `formula` via
@@ -239,6 +257,7 @@
   .check_no_na(data[[index]], index)
   if (!is.null(group)) .check_no_na(data[[group]], group)
   .check_nonneg_integer(data[[y]], y)
+  .check_has_variation(data[[y]], y)
 
   Y <- data.table::data.table(
     orig_row = seq_len(nrow(data)),

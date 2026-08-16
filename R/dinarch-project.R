@@ -63,8 +63,11 @@
 #'   functions.
 #' @param seed Optional random seed.
 #'
-#' @return A `data.table` with columns `group`, `index`, `sim` (replicate
-#'   id, `1:nsim`), `y`, and the raw covariate columns `object$formula`
+#' @return A `data.table` (also classed `"dinarch_project"`, so
+#'   [plot.dinarch_project()] works, but otherwise behaves exactly like an
+#'   ordinary `data.table` - nothing about the usual `data.table` syntax
+#'   changes) with columns `group`, `index`, `sim` (replicate id,
+#'   `1:nsim`), `y`, and the raw covariate columns `object$formula`
 #'   references (whatever values were actually used, so the output is
 #'   self-documenting even when mixing defaults with `new_data`
 #'   overrides).
@@ -248,5 +251,185 @@ dinarch_project <- function(object,
 
   out <- data.table::rbindlist(replicate_results)
   data.table::setcolorder(out, c("group", "index", "sim", "y"))
+
+  # Carried along for plot.dinarch_project() so `plot(proj)` works with no
+  # further arguments - the fit's own historical (group, index, y), not
+  # recomputed here since `fit_data` already has it.
+  data.table::setattr(out, "history", fit_data[, c("group", "index", "y"), with = FALSE])
+  data.table::setattr(out, "class", c("dinarch_project", class(out)))
   out[]
+}
+
+# Expand one group's sorted (index, lo, hi, med) rows into a step ("post",
+# i.e. flat-then-jump - matching geom_step()'s default direction) polygon
+# boundary for geom_ribbon(), which has no built-in step variant of its own.
+.dinarch_stepify_ribbon <- function(dt) {
+  data.table::setorderv(dt, "index")
+  if (nrow(dt) <= 1) return(dt[, c("index", "lo", "hi", "med"), with = FALSE])
+  idx <- c(dt$index[1], rep(dt$index[-1], each = 2))
+  step_col <- function(v) c(rep(utils::head(v, -1), each = 2), utils::tail(v, 1))
+  data.table::data.table(
+    index = idx, lo = step_col(dt$lo), hi = step_col(dt$hi), med = step_col(dt$med)
+  )
+}
+
+#' Plot a DINARCH projection
+#'
+#' A minimal `ggplot2` plot of a [dinarch_project()] result: the fitted
+#' model's historical `y` (if available) as a single line, plus either
+#' every simulated replicate as its own thin line (`type = "spaghetti"`)
+#' or a shaded quantile ribbon with a median line (`type = "ribbon"`,
+#' the default) summarizing the replicates at each `index`. Each group's
+#' projected series is prepended with the last historical point strictly
+#' before it, so the projection visually starts exactly where the
+#' historical line ends instead of jumping in from a disconnected point.
+#' One facet per group (skipped for a single-group/ungrouped fit). Returns
+#' the `ggplot` object rather than just drawing it, so it prints like a
+#' normal plot when called at the top level but can also be captured and
+#' extended, e.g. `plot(proj) + ggplot2::ggtitle("Forecast")` - titles,
+#' themes, and any other customization are deliberately left to the
+#' caller rather than built in here.
+#'
+#' @param x A `"dinarch_project"` object, i.e. the output of
+#'   [dinarch_project()].
+#' @param type `"ribbon"` (default) or `"spaghetti"` - see above.
+#' @param probs For `type = "ribbon"`, the lower/upper quantile
+#'   probabilities of the shaded band (default the 10th/90th percentile).
+#' @param step If `TRUE`, draw step functions (`ggplot2::geom_step()`,
+#'   holding each value flat until the next `index`) instead of straight
+#'   line segments between points - appropriate for count data, where a
+#'   straight line between two integers implies values that were never
+#'   observed. Default `FALSE`.
+#' @param ... Unused (kept for `plot()` generic compatibility).
+#'
+#' @return A `ggplot` object.
+#' @export
+plot.dinarch_project <- function(x, type = c("ribbon", "spaghetti"), probs = c(0.1, 0.9),
+                                  step = FALSE, ...) {
+  if (!requireNamespace("ggplot2", quietly = TRUE)) {
+    stop("Package 'ggplot2' is required for plot.dinarch_project() but is not installed.")
+  }
+  type <- match.arg(type)
+  stopifnot(length(probs) == 2, probs[1] < probs[2])
+  stopifnot(is.logical(step), length(step) == 1, !is.na(step))
+
+  line_geom <- if (step) ggplot2::geom_step else ggplot2::geom_line
+
+  history <- attr(x, "history")
+  multi_group <- length(unique(c(x$group, history$group))) > 1
+
+  # Last historical point strictly before each group's first projected
+  # index - prepended below so the projection connects to, rather than
+  # jumps in disconnected from, the end of the historical line.
+  connector <- NULL
+  if (!is.null(history) && nrow(history) > 0) {
+    connector <- data.table::rbindlist(lapply(unique(x$group), function(g) {
+      first_idx <- min(x$index[x$group == g])
+      h_g <- history[history$group == g & history$index < first_idx]
+      if (nrow(h_g) == 0) return(NULL)
+      h_g[which.max(h_g$index)]
+    }))
+  }
+  has_connector <- !is.null(connector) && nrow(connector) > 0
+
+  p <- ggplot2::ggplot()
+
+  if (!is.null(history) && nrow(history) > 0) {
+    p <- p + line_geom(
+      data = history, ggplot2::aes(x = .data$index, y = .data$y)
+    )
+  }
+
+  if (type == "spaghetti") {
+    spaghetti_data <- x[, c("group", "sim", "index", "y"), with = FALSE]
+    if (has_connector) {
+      sims <- unique(x$sim)
+      rep_pos <- rep(seq_len(nrow(connector)), each = length(sims))
+      conn <- data.table::data.table(
+        group = connector$group[rep_pos], sim = rep(sims, times = nrow(connector)),
+        index = connector$index[rep_pos], y = connector$y[rep_pos]
+      )
+      spaghetti_data <- data.table::rbindlist(list(conn, spaghetti_data), use.names = TRUE)
+    }
+    data.table::setorderv(spaghetti_data, c("group", "sim", "index"))
+
+    p <- p + line_geom(
+      data = spaghetti_data,
+      ggplot2::aes(x = .data$index, y = .data$y, group = interaction(.data$group, .data$sim)),
+      colour = "steelblue", alpha = 0.15
+    )
+  } else {
+    agg <- x[, list(
+      lo  = stats::quantile(y, probs[1]),
+      hi  = stats::quantile(y, probs[2]),
+      med = stats::median(y)
+    ), by = c("group", "index")]
+
+    if (has_connector) {
+      conn <- data.table::data.table(
+        group = connector$group, index = connector$index,
+        lo = connector$y, hi = connector$y, med = connector$y
+      )
+      agg <- data.table::rbindlist(list(conn, agg), use.names = TRUE)
+    }
+    data.table::setorderv(agg, c("group", "index"))
+
+    ribbon_data <- if (step) agg[, .dinarch_stepify_ribbon(.SD), by = "group"] else agg
+
+    p <- p +
+      ggplot2::geom_ribbon(
+        data = ribbon_data, ggplot2::aes(x = .data$index, ymin = .data$lo, ymax = .data$hi),
+        fill = "steelblue", alpha = 0.3
+      ) +
+      line_geom(
+        data = agg, ggplot2::aes(x = .data$index, y = .data$med),
+        colour = "steelblue"
+      )
+  }
+
+  if (multi_group) {
+    p <- p + ggplot2::facet_wrap(~group, scales = "free_y")
+  }
+
+  p + ggplot2::labs(x = "index", y = "y")
+}
+
+#' Summarize a DINARCH projection/prediction
+#'
+#' Collapses a [dinarch_project()]/[predict.dinarch_fit()] result's `nsim`
+#' replicates at each `(group, index)` into a mean and a simulation-based
+#' prediction interval - a compact numeric alternative to [plot()]. `index`
+#' carries its usual meaning: for an out-of-sample call (`horizon` set),
+#' it's periods ahead of the last observed period; for an in-sample call,
+#' it's the historical period being replayed.
+#'
+#' @param object A `"dinarch_project"` object.
+#' @param level Prediction interval level (default 0.95, i.e. the
+#'   simulated draws' 2.5th/97.5th percentiles at each period).
+#' @param ... Unused.
+#'
+#' @return An object of class `"summary.dinarch_project"`, printing as a
+#'   table with columns `group`, `index`, `mean`, `lower`, `upper`.
+#' @export
+summary.dinarch_project <- function(object, level = 0.95, ...) {
+  stopifnot(is.numeric(level), length(level) == 1, level > 0, level < 1)
+  alpha <- 1 - level
+  probs <- c(alpha / 2, 1 - alpha / 2)
+
+  agg <- object[, list(
+    mean  = mean(y),
+    lower = stats::quantile(y, probs[1]),
+    upper = stats::quantile(y, probs[2])
+  ), by = c("group", "index")]
+  data.table::setorderv(agg, c("group", "index"))
+
+  structure(list(table = agg, level = level), class = "summary.dinarch_project")
+}
+
+#' @export
+print.summary.dinarch_project <- function(x, ...) {
+  cat(sprintf("DINARCH projection - %.0f%% simulation-based prediction interval\n", 100 * x$level))
+  cat(strrep("-", 50), "\n", sep = "")
+  print(as.data.frame(x$table), row.names = FALSE, digits = 4)
+  invisible(x)
 }

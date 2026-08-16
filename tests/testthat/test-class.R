@@ -87,3 +87,35 @@ test_that("simulate.dinarch_fit's use_draw runs using a specific posterior draw"
   expect_equal(nrow(sim_mean), 30)
   expect_equal(nrow(sim_draw), 30)
 })
+
+# predict.dinarch_fit ----------------------------------------------------
+
+test_that("predict.dinarch_fit forecasts horizon periods with nsim draws each, classed dinarch_project", {
+  pred <- predict(.test_ml_fit, horizon = 5, nsim = 20, seed = 1)
+  expect_s3_class(pred, "dinarch_project")
+  expect_s3_class(pred, "data.table")
+  expect_equal(nrow(pred), 5 * 20)
+  expect_equal(sort(unique(pred$index)), 201:205)
+})
+
+test_that("predict.dinarch_fit defaults to nsim = 1000 and horizon = NULL (in-sample)", {
+  pred_default <- predict(.test_ml_fit, horizon = 3)
+  expect_equal(nrow(pred_default), 3 * 1000)
+
+  pred_insample <- predict(.test_ml_fit, nsim = 10, seed = 1)
+  expect_true(all(pred_insample$index <= 200))
+})
+
+test_that("predict.dinarch_fit's use_draw errors for ML fits and works for Bayes fits", {
+  expect_error(predict(.test_ml_fit, horizon = 3, use_draw = "random"), "Bayesian")
+
+  skip_if_not_installed("rstan")
+  pred <- predict(.test_bayes_fit, horizon = 3, nsim = 10, use_draw = "random", seed = 2)
+  expect_equal(nrow(pred), 3 * 10)
+})
+
+test_that("predict.dinarch_fit forwards scenario arguments (new_para, y_threshold) via ...", {
+  new_para <- data.frame(index = 201:203, b1 = 0.05)
+  pred <- predict(.test_ml_fit, horizon = 3, nsim = 5, new_para = new_para, seed = 1)
+  expect_equal(nrow(pred), 3 * 5)
+})

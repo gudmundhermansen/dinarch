@@ -158,3 +158,140 @@ test_that("dinarch_project() errors informatively on a fit without stored $data"
 
   expect_error(dinarch_project(fit, horizon = 3), "no stored")
 })
+
+test_that("plot.dinarch_project() returns a ggplot for a single group, both types", {
+  testthat::skip_if_not_installed("ggplot2")
+
+  n <- 60
+  sim <- dinarch_simulate(n = n, b = 0.3, phi = 8, beta = log(4), seed = 2)
+  dat <- data.frame(y = sim$y, index = sim$index)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
+  proj <- dinarch_project(fit, horizon = 5, nsim = 10, seed = 2)
+
+  expect_s3_class(proj, "dinarch_project")
+  expect_s3_class(plot(proj), "ggplot")
+  expect_s3_class(plot(proj, type = "spaghetti"), "ggplot")
+})
+
+test_that("plot.dinarch_project() facets by group only when there is more than one", {
+  testthat::skip_if_not_installed("ggplot2")
+
+  n <- 40
+  sim1 <- dinarch_simulate(n = n, b = 0.3, phi = 6, beta = log(3), seed = 10)
+  sim2 <- dinarch_simulate(n = n, b = 0.3, phi = 6, beta = log(3), seed = 11)
+  dat <- rbind(
+    data.frame(y = sim1$y, index = seq_len(n), group = "A"),
+    data.frame(y = sim2$y, index = seq_len(n), group = "B")
+  )
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", group = "group", n_lags = 1, vcov = FALSE)
+  proj <- dinarch_project(fit, horizon = 5, nsim = 10, seed = 4)
+
+  p_multi <- plot(proj)
+  expect_true(length(p_multi$facet$params$facets) > 0)
+
+  fit1 <- dinarch_fit_ml(
+    data.frame(y = sim1$y, index = seq_len(n)), y = "y", index = "index", n_lags = 1, vcov = FALSE
+  )
+  proj1 <- dinarch_project(fit1, horizon = 5, nsim = 10, seed = 4)
+  p_single <- plot(proj1)
+  expect_length(p_single$facet$params$facets, 0)
+})
+
+test_that("plot.dinarch_project() works for an in-sample replay (no future indexes)", {
+  testthat::skip_if_not_installed("ggplot2")
+
+  n <- 40
+  sim <- dinarch_simulate(n = n, b = 0.2, phi = 8, beta = log(3), seed = 5)
+  dat <- data.frame(y = sim$y, index = sim$index)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
+  proj <- dinarch_project(fit, horizon = NULL, nsim = 10, seed = 5)
+
+  expect_s3_class(plot(proj), "ggplot")
+})
+
+test_that("plot.dinarch_project() can be extended by the caller", {
+  testthat::skip_if_not_installed("ggplot2")
+
+  n <- 40
+  sim <- dinarch_simulate(n = n, b = 0.2, phi = 8, beta = log(3), seed = 5)
+  dat <- data.frame(y = sim$y, index = sim$index)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
+  proj <- dinarch_project(fit, horizon = 5, nsim = 10, seed = 5)
+
+  p <- plot(proj) + ggplot2::ggtitle("Forecast")
+  expect_s3_class(p, "ggplot")
+  expect_equal(p$labels$title, "Forecast")
+})
+
+test_that("plot.dinarch_project() step = TRUE returns a ggplot for both types", {
+  testthat::skip_if_not_installed("ggplot2")
+
+  n <- 60
+  sim <- dinarch_simulate(n = n, b = 0.3, phi = 8, beta = log(4), seed = 2)
+  dat <- data.frame(y = sim$y, index = sim$index)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
+  proj <- dinarch_project(fit, horizon = 5, nsim = 10, seed = 2)
+
+  expect_s3_class(plot(proj, step = TRUE), "ggplot")
+  expect_s3_class(plot(proj, type = "spaghetti", step = TRUE), "ggplot")
+})
+
+test_that("plot.dinarch_project() connects the projection to the last historical point", {
+  testthat::skip_if_not_installed("ggplot2")
+
+  n <- 60
+  sim <- dinarch_simulate(n = n, b = 0.3, phi = 8, beta = log(4), seed = 2)
+  dat <- data.frame(y = sim$y, index = sim$index)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
+  proj <- dinarch_project(fit, horizon = 5, nsim = 10, seed = 2)
+  hist_last <- utils::tail(fit$data$y, 1)
+
+  ribbon_layer <- ggplot2::ggplot_build(plot(proj))$data[[2]]
+  first_pt <- ribbon_layer[which.min(ribbon_layer$x), ]
+  expect_equal(first_pt$ymin, hist_last)
+  expect_equal(first_pt$ymax, hist_last)
+
+  spaghetti_layer <- ggplot2::ggplot_build(plot(proj, type = "spaghetti"))$data[[2]]
+  first_pts <- spaghetti_layer[spaghetti_layer$x == min(spaghetti_layer$x), ]
+  expect_true(all(first_pts$y == hist_last))
+})
+
+test_that("summary.dinarch_project() returns one mean/interval row per (group, index)", {
+  n <- 60
+  sim <- dinarch_simulate(n = n, b = 0.3, phi = 8, beta = log(4), seed = 2)
+  dat <- data.frame(y = sim$y, index = sim$index)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
+  proj <- dinarch_project(fit, horizon = 5, nsim = 200, seed = 2)
+
+  s <- summary(proj)
+  expect_s3_class(s, "summary.dinarch_project")
+  expect_identical(names(s$table), c("group", "index", "mean", "lower", "upper"))
+  expect_equal(nrow(s$table), 5)
+  expect_equal(s$table$index, (n + 1):(n + 5))
+  expect_true(all(s$table$lower <= s$table$mean & s$table$mean <= s$table$upper))
+  expect_output(print(s), "prediction interval")
+})
+
+test_that("summary.dinarch_project()'s level controls the interval width", {
+  n <- 60
+  sim <- dinarch_simulate(n = n, b = 0.3, phi = 8, beta = log(4), seed = 2)
+  dat <- data.frame(y = sim$y, index = sim$index)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
+  proj <- dinarch_project(fit, horizon = 5, nsim = 500, seed = 2)
+
+  s_narrow <- summary(proj, level = 0.5)
+  s_wide <- summary(proj, level = 0.95)
+  expect_true(all((s_wide$table$upper - s_wide$table$lower) >=
+                     (s_narrow$table$upper - s_narrow$table$lower)))
+})
+
+test_that("summary.dinarch_project() works on predict.dinarch_fit()'s output too", {
+  n <- 60
+  sim <- dinarch_simulate(n = n, b = 0.3, phi = 8, beta = log(4), seed = 2)
+  dat <- data.frame(y = sim$y, index = sim$index)
+  fit <- dinarch_fit_ml(dat, y = "y", index = "index", n_lags = 1, vcov = FALSE)
+
+  s <- summary(predict(fit, horizon = 5, nsim = 50, seed = 1))
+  expect_s3_class(s, "summary.dinarch_project")
+  expect_equal(nrow(s$table), 5)
+})

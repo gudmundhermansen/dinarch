@@ -56,28 +56,59 @@ summary(fit)
 `summary()` reports standard errors and confidence intervals alongside the
 point estimates.
 
-## Forecast forward
+## Predict forward
 
-`dinarch_project()` simulates forward from a fitted model - `horizon` sets
-how many periods ahead, `nsim` how many stochastic replicates to draw.
-Covariates are held fixed at their last observed value by default.
+`predict()` draws samples from the fitted model's predictive distribution -
+`horizon` sets how many periods ahead, `nsim` how many draws. Covariates are
+held fixed at their last observed value by default.
 
 ```{r}
-forecast <- dinarch_project(fit, horizon = 10, nsim = 200, seed = 2)
-head(forecast)
-
-# median and a 90% interval per forecast period
-agg <- forecast[, .(
-  median = median(y),
-  lo90 = quantile(y, 0.05),
-  hi90 = quantile(y, 0.95)
-), by = index]
-agg
+pred <- predict(fit, horizon = 10, nsim = 500, seed = 2)
+head(pred)
 ```
 
-Calling `dinarch_project()` with `horizon = NULL` instead replays the fitted
-model in-sample, which is useful as a quick check that the fitted dynamics
+`summary()` collapses the draws into a mean and prediction interval per
+period; `plot()` shows the same thing as a shaded band (pass
+`type = "spaghetti"` to instead draw every draw as its own thin line).
+
+```{r, fig.width = 6, fig.height = 4}
+summary(pred)
+plot(pred)
+```
+
+Calling `predict()` with `horizon = NULL` (the default) instead replays the
+fitted model in-sample, useful as a quick check that the fitted dynamics
 look reasonable against the data the model was fit to.
+
+`predict()` is a thin convenience wrapper around the more general
+`dinarch_project()`, which additionally supports scenario-style
+overrides (`new_data` for alternative covariate paths, `new_para` for
+per-period parameter overrides) - see below.
+
+## Scenario: transitioning between two fits
+
+Suppose a second fit represents a different regime - `dinarch_transition_new_para()`
+builds a `new_para` table that smoothly interpolates every parameter from
+one fit to another over the forecast horizon, for scenarios like "assume
+the dynamics gradually shift from `fit`'s regime to `fit_b`'s":
+
+```{r, fig.width = 6, fig.height = 4}
+sim_b <- dinarch_simulate(
+  n = n, b = 0.7, phi = 8,
+  formula = ~gdp, covariates = data.frame(gdp = gdp),
+  beta = c(log(4), 1.2), seed = 3
+)
+dat_b <- data.frame(y = sim_b$y, index = sim_b$index, gdp = gdp)
+fit_b <- dinarch_fit_ml(dat_b, y = "y", index = "index", formula = ~gdp, n_lags = 1)
+
+new_para <- dinarch_transition_new_para(fit, fit_b, horizon = 10)
+scenario <- dinarch_project(fit, horizon = 10, nsim = 500, new_para = new_para, seed = 2)
+plot(scenario)
+```
+
+By the last forecast period, the simulated dynamics match `fit_b`'s
+parameters exactly. `fit` and `fit_b` must share `n_lags` and the same
+`beta` coefficient names (i.e. the same `formula`).
 
 ## Bayesian estimation
 

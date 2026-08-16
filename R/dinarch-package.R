@@ -36,5 +36,10 @@
 ## Columns referenced via data.table's non-standard evaluation get added to
 ## this list as they're introduced in fit/simulate code, to keep
 ## R CMD check quiet about "no visible binding for global variable".
-## "y" is used bare in utils.R's .add_lag_columns().
-utils::globalVariables(c("y"))
+## "y" is used bare in utils.R's .add_lag_columns(). ".data" is ggplot2's
+## NSE pronoun, used in plot.dinarch_project() (ggplot2 is Suggests-only,
+## so it can't be resolved via @importFrom). ".SD" is data.table's own
+## special symbol (also used bare in plot.dinarch_project()) - despite
+## being a data.table built-in, it still needs an explicit entry here for
+## R CMD check's static analysis to stay quiet about it.
+utils::globalVariables(c("y", ".data", ".SD"))

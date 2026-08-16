@@ -77,8 +77,11 @@ functions.}
 \item{seed}{Optional random seed.}
 }
 \value{
-A \code{data.table} with columns \code{group}, \code{index}, \code{sim} (replicate
-id, \code{1:nsim}), \code{y}, and the raw covariate columns \code{object$formula}
+A \code{data.table} (also classed \code{"dinarch_project"}, so
+\code{\link[=plot.dinarch_project]{plot.dinarch_project()}} works, but otherwise behaves exactly like an
+ordinary \code{data.table} - nothing about the usual \code{data.table} syntax
+changes) with columns \code{group}, \code{index}, \code{sim} (replicate id,
+\code{1:nsim}), \code{y}, and the raw covariate columns \code{object$formula}
 references (whatever values were actually used, so the output is
 self-documenting even when mixing defaults with \code{new_data}
 overrides).
