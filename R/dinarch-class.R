@@ -1,0 +1,251 @@
+# dinarch_fit class methods ------------------------------------------------
+
+#' @export
+print.dinarch_fit <- function(x, ...) {
+  cat(sprintf("<dinarch_fit>  method = %s   n_lags = %d\n", x$method, x$n_lags))
+
+  cat(sprintf("  b   = %s\n", paste(format(x$coefficients$b, digits = 4), collapse = ", ")))
+  cat(sprintf("  phi = %s\n", format(x$coefficients$phi, digits = 4)))
+  cat(sprintf("  beta = %s\n", paste(
+    sprintf("%s = %s", names(x$coefficients$beta), format(x$coefficients$beta, digits = 4)),
+    collapse = ", "
+  )))
+
+  if (!is.null(x$loglik)) {
+    cat(sprintf("Log-likelihood: %.2f  (n = %d)\n", x$loglik, x$n_obs))
+  }
+
+  invisible(x)
+}
+
+#' @export
+coef.dinarch_fit <- function(object, ...) {
+  object$coefficients
+}
+
+#' Summarize a DINARCH fit
+#'
+#' @param object A `"dinarch_fit"` object.
+#' @param level Interval level: posterior credible interval for Bayesian
+#'   fits, Wald (normal-approximation) confidence interval for ML fits
+#'   when standard errors are available (see Details).
+#' @param ... Unused.
+#'
+#' @details ML fits report standard errors and Wald confidence intervals
+#'   when `object$se` is available (the default - see
+#'   [dinarch_fit_ml()]'s `vcov` argument and Details for how these are
+#'   computed, and their limitations near a boundary or in small
+#'   samples); if `vcov = FALSE` was used, or the Hessian was singular at
+#'   the optimum, only point estimates are shown. Bayesian fits report
+#'   posterior means with credible intervals computed from the stored
+#'   posterior draws.
+#'
+#' @return An object of class `"summary.dinarch_fit"`.
+#' @export
+summary.dinarch_fit <- function(object, level = 0.95, ...) {
+
+  coef_names <- c(
+    paste0("b[", seq_len(object$n_lags), "]"),
+    "phi",
+    names(object$coefficients$beta)
+  )
+
+  estimate <- c(
+    object$coefficients$b,
+    object$coefficients$phi,
+    object$coefficients$beta
+  )
+
+  alpha <- 1 - level
+
+  if (identical(object$method, "bayes") && !is.null(object$posterior)) {
+    probs <- c(alpha / 2, 1 - alpha / 2)
+
+    post_mat <- cbind(
+      object$posterior$b,
+      matrix(object$posterior$phi, ncol = 1),
+      if (length(object$coefficients$beta) > 0) object$posterior$beta
+    )
+    ci <- t(apply(post_mat, 2, stats::quantile, probs = probs))
+
+    coef_table <- data.frame(
+      term = coef_names, estimate = estimate,
+      lower = ci[, 1], upper = ci[, 2],
+      row.names = NULL
+    )
+  } else if (!is.null(object$se) &&
+             !all(is.na(c(object$se$b, object$se$phi, object$se$beta)))) {
+    se_vec <- c(object$se$b, object$se$phi, object$se$beta)
+    z <- stats::qnorm(1 - alpha / 2)
+    coef_table <- data.frame(
+      term = coef_names, estimate = estimate, se = se_vec,
+      lower = estimate - z * se_vec, upper = estimate + z * se_vec,
+      row.names = NULL
+    )
+  } else {
+    coef_table <- data.frame(term = coef_names, estimate = estimate, row.names = NULL)
+  }
+
+  n_par <- length(estimate)
+  aic <- if (!is.na(object$loglik)) -2 * object$loglik + 2 * n_par else NA_real_
+  bic <- if (!is.na(object$loglik)) -2 * object$loglik + log(object$n_obs) * n_par else NA_real_
+
+  structure(
+    list(
+      method = object$method, n_lags = object$n_lags,
+      n_obs = object$n_obs, coefficients = coef_table,
+      loglik = object$loglik, aic = aic, bic = bic,
+      convergence = object$convergence, level = level
+    ),
+    class = "summary.dinarch_fit"
+  )
+}
+
+#' @export
+print.summary.dinarch_fit <- function(x, ...) {
+  cat(sprintf("DINARCH fit (%s)   n_lags = %d   n = %d\n", x$method, x$n_lags, x$n_obs))
+  cat(strrep("-", 50), "\n", sep = "")
+  print(x$coefficients, row.names = FALSE, digits = 4)
+  cat(strrep("-", 50), "\n", sep = "")
+
+  if (identical(x$method, "ml")) {
+    cat(sprintf("Log-likelihood: %.2f   AIC: %.2f   BIC: %.2f\n", x$loglik, x$aic, x$bic))
+    if ("se" %in% names(x$coefficients)) {
+      cat(sprintf("%.0f%% Wald confidence intervals shown (normal approximation).\n", 100 * x$level))
+    } else {
+      cat("Note: standard errors unavailable (vcov = FALSE, or a singular Hessian at the optimum).\n")
+    }
+    if (!is.na(x$convergence) && x$convergence != 0) {
+      cat("Note: optimizer did not report successful convergence.\n")
+    }
+  } else {
+    cat(sprintf("Posterior %.0f%% credible intervals shown.\n", 100 * x$level))
+    if (!is.na(x$convergence)) {
+      note <- if (x$convergence > 1.1) "  (consider more iterations/chains)" else ""
+      cat(sprintf("Max Rhat: %.3f%s\n", x$convergence, note))
+    }
+  }
+
+  invisible(x)
+}
+
+#' Simulate forward from a fitted DINARCH model
+#'
+#' A convenience wrapper around [dinarch_simulate()] that pulls `b`,
+#' `phi`, and `beta` (plus the fit's `formula`) directly from a
+#' `"dinarch_fit"` object, so you don't have to copy coefficients out by
+#' hand.
+#'
+#' The parameter is named `nsim` (not `n`) specifically to match
+#' [stats::simulate()]'s generic signature - calling `simulate(fit, n = 20)`
+#' instead would have R's partial argument matching silently (and
+#' incorrectly) bind `20` to `nsim` on the *generic* before dispatch even
+#' happens.
+#'
+#' @param object A `"dinarch_fit"` object.
+#' @param nsim Number of periods to simulate forward.
+#' @param seed Optional random seed.
+#' @param covariates,y_threshold,y_init,burn_in Forward paths/settings for
+#'   the simulated horizon - see [dinarch_simulate()]. These describe the
+#'   *future*, so they are not taken from the fit automatically;
+#'   `covariates` must supply whatever variables the fit's `formula`
+#'   references (a warning is issued if it references any and
+#'   `covariates` is `NULL`).
+#' @param use_draw For Bayesian fits only: an integer index into the stored
+#'   posterior draws, or `"random"` to sample a fresh draw. If supplied,
+#'   that draw's parameters are used instead of the posterior mean - call
+#'   this repeatedly (e.g. with `"random"`) to propagate full posterior
+#'   uncertainty into a simulation ensemble. `NULL` (default) uses the
+#'   point estimate (posterior mean for Bayesian fits, MLE for ML fits).
+#' @param ... Unused.
+#'
+#' @return A `data.table`, as for [dinarch_simulate()].
+#' @export
+simulate.dinarch_fit <- function(object, nsim = 10, seed = NULL,
+                                  covariates = NULL,
+                                  y_threshold = NULL,
+                                  y_init = NULL, burn_in = 0,
+                                  use_draw = NULL, ...) {
+
+  pars <- .dinarch_pick_params(object, use_draw)
+  b <- pars$b; phi <- pars$phi; beta <- pars$beta
+
+  formula_terms <- attr(stats::terms(object$formula), "term.labels")
+  if (length(formula_terms) > 0 && is.null(covariates)) {
+    warning(
+      "This fit's `formula` references covariate(s) (",
+      paste(formula_terms, collapse = ", "),
+      "); no forward `covariates` were supplied, so `model.matrix()` will ",
+      "fail unless those variables happen to not be needed (e.g. an ",
+      "interaction-only formula) - supply a `covariates` data.frame with ",
+      "the forward paths for these variables."
+    )
+  }
+
+  dinarch_simulate(
+    n = nsim,
+    b = b, phi = phi,
+    formula = object$formula,
+    covariates = covariates,
+    beta = beta,
+    y_init = y_init,
+    burn_in = burn_in,
+    y_threshold = y_threshold,
+    seed = seed
+  )
+}
+
+#' Predict from a fitted DINARCH model
+#'
+#' Draws `nsim` samples from the model's predictive distribution via
+#' [dinarch_project()] - a thin wrapper exposing only the arguments that
+#' are reasonable to change for genuine prediction (as opposed to
+#' constructing a scenario). Each replicate is one draw of the future (or,
+#' with `horizon = NULL`, in-sample) path, combining parameter uncertainty
+#' (via `use_draw`, for Bayesian fits) with observation-level
+#' negative-binomial noise. Summarize the result with
+#' [summary.dinarch_project()] for a compact mean/prediction-interval
+#' table, or pass it to [plot()] directly.
+#'
+#' [dinarch_project()]'s `new_para` (per-period `b`/`phi`/`beta`
+#' overrides, e.g. from [dinarch_transition_new_para()] or
+#' [dinarch_transition_path()]) and `y_threshold` (a rolling-window
+#' escalation cap) both describe *scenario* constructions
+#' rather than draws from the fitted model's own predictive distribution,
+#' so they are not named arguments here - call [dinarch_project()]
+#' directly if you need them (they can still be passed through `...`).
+#'
+#' @param object A `"dinarch_fit"` object.
+#' @param data The historical data to predict from - see [dinarch_project()].
+#'   A fit object stores no data of its own, so this is always explicit.
+#' @param horizon `NULL` (default) predicts in-sample; a positive integer
+#'   forecasts that many periods ahead - see [dinarch_project()].
+#' @param nsim Number of predictive draws. Default 1000 (higher than
+#'   [dinarch_project()]'s default of 1, since the point of `predict()` is
+#'   to characterize the predictive distribution).
+#' @param new_data Optional forward/alternative covariate values - see
+#'   [dinarch_project()].
+#' @param use_draw For Bayesian fits: `NULL` (default) uses the posterior
+#'   mean for every replicate; `"random"` samples a fresh posterior draw
+#'   per replicate, propagating full posterior uncertainty into the
+#'   predictive draws on top of the observation-level noise; an integer
+#'   pins one specific draw for every replicate. Must stay `NULL` for ML
+#'   fits (any other value errors - there is no posterior to draw from).
+#' @param seed Optional random seed.
+#' @param ... Passed through to [dinarch_project()] (e.g. `new_para`,
+#'   `y_threshold`, `y`/`time`/`id` column names, for scenario-style
+#'   overrides or non-default column names).
+#'
+#' @return A `data.table` (also classed `"dinarch_project"`, so [plot()]
+#'   and [summary.dinarch_project()] both work on it directly), one row
+#'   per `(id, time, sim)` observation - both `data`'s historical rows
+#'   (repeated per `sim`) and the predictive draws, see
+#'   [dinarch_project()]'s `historical` column.
+#' @export
+predict.dinarch_fit <- function(object, data, horizon = NULL, nsim = 1000, new_data = NULL,
+                                 use_draw = NULL, seed = NULL, ...) {
+  dinarch_project(
+    object, data, horizon = horizon, nsim = nsim, new_data = new_data,
+    use_draw = use_draw, seed = seed, ...
+  )
+}

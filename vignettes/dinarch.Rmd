@@ -1,0 +1,185 @@
+---
+title: "Getting started with dinarch"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting started with dinarch}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+```{r setup}
+library(dinarch)
+```
+
+`dinarch` fits Dynamic Innovation Negative Binomial ARCH (NB-DINARCH) models
+to count time series: an autoregressive negative-binomial model where the
+mean depends on past counts and, optionally, covariates.
+
+## Simulate some data
+
+`dinarch_simulate()` generates a count series with a given autoregressive
+coefficient `b`, dispersion `phi`, and (optionally) covariate effects
+specified via a model formula.
+
+```{r}
+set.seed(2)
+n <- 200
+gdp <- rnorm(n)
+
+sim <- dinarch_simulate(
+  n = n, b = 0.3, phi = 8,
+  formula = ~gdp, covariates = data.frame(gdp = gdp),
+  beta = c(log(4), 0.5),
+  seed = 2
+)
+
+dat <- data.frame(y = sim$y, time = sim$time, gdp = gdp)
+head(dat)
+```
+
+## Fit the model
+
+`dinarch_fit_ml()` fits the model by maximum likelihood. `formula` specifies
+how covariates enter the mean (here, a single `gdp` effect plus an
+intercept); `n_lags` sets the number of autoregressive lags.
+
+```{r}
+fit <- dinarch_fit_ml(dat, y = "y", time = "time", formula = ~gdp, n_lags = 1)
+fit
+summary(fit)
+```
+
+`summary()` reports standard errors and confidence intervals alongside the
+point estimates.
+
+## Predict forward
+
+`predict()` draws samples from the fitted model's predictive distribution -
+`horizon` sets how many periods ahead, `nsim` how many draws. A fit object
+stores no data of its own, so `predict()` always takes the historical data
+to project from explicitly - this keeps it clear which data a projection is
+built from, and lets you project the same fit forward from updated data
+without refitting. Covariates default to their last observed value in `data`.
+
+```{r}
+pred <- predict(fit, dat, horizon = 10, nsim = 500, seed = 2)
+head(pred)
+```
+
+The result has one row per `(id, time, sim)` observation: `dat`'s historical
+rows (repeated once per replicate) plus the simulated/forecast draws, marked
+by the `historical` column - so `pred[pred$sim == 1, ]` is always one
+complete, continuously-indexed series (history through the forecast).
+
+`summary()` collapses the simulated draws (`historical == FALSE`) into a
+mean and prediction interval per period; `plot()` shows the same thing as a
+shaded band (pass `type = "spaghetti"` to instead draw every draw as its
+own thin line).
+
+```{r, fig.width = 6, fig.height = 4}
+summary(pred)
+plot(pred)
+```
+
+Calling `predict()` with `horizon = NULL` (the default) instead replays the
+fitted model in-sample, useful as a quick check that the fitted dynamics
+look reasonable against the data the model was fit to.
+
+`predict()` is a thin convenience wrapper around the more general
+`dinarch_project()`, which additionally supports scenario-style
+overrides (`new_data` for alternative covariate paths, `new_para` for
+per-period parameter overrides) - see below.
+
+## Scenario: transitioning between two fits
+
+Suppose a second fit represents a different regime - `dinarch_transition_new_para()`
+builds a `new_para` table that smoothly interpolates every parameter from
+one fit to another over the forecast horizon, for scenarios like "assume
+the dynamics gradually shift from `fit`'s regime to `fit_b`'s":
+
+```{r, fig.width = 6, fig.height = 4}
+sim_b <- dinarch_simulate(
+  n = n, b = 0.7, phi = 8,
+  formula = ~gdp, covariates = data.frame(gdp = gdp),
+  beta = c(log(4), 1.2), seed = 3
+)
+dat_b <- data.frame(y = sim_b$y, time = sim_b$time, gdp = gdp)
+fit_b <- dinarch_fit_ml(dat_b, y = "y", time = "time", formula = ~gdp, n_lags = 1)
+
+new_para <- dinarch_transition_new_para(fit, fit_b, dat, horizon = 10)
+scenario <- dinarch_project(fit, dat, horizon = 10, nsim = 500, new_para = new_para, seed = 2)
+plot(scenario)
+```
+
+By the last forecast period, the simulated dynamics match `fit_b`'s
+parameters exactly. `fit` and `fit_b` must share `n_lags` and the same
+`beta` coefficient names (i.e. the same `formula`).
+
+## Multiple series: unpooled fits, combined for plotting
+
+`dinarch_fit_ml()`/`dinarch_fit_bayes()` accept an `id` column to *pool*
+several series into one shared set of coefficients (lags never cross an
+id boundary, but `b`/`phi`/`beta` are shared across every id). Sometimes
+you instead want each series fit *separately*, with its own dynamics -
+that's just calling the fit function once per series and combining the
+resulting `dinarch_project()` calls afterward.
+
+```{r}
+ids <- c("A", "B", "C")
+dat_list <- lapply(ids, function(g) {
+  s <- dinarch_simulate(n = 60, b = 0.3, phi = 8, beta = log(4), seed = which(ids == g))
+  data.frame(y = s$y, time = s$time, id = g)
+})
+names(dat_list) <- ids
+
+fits <- lapply(ids, function(g) dinarch_fit_ml(dat_list[[g]], n_lags = 1, vcov = FALSE))
+names(fits) <- ids
+```
+
+Project each series from its own fit and its own data, then combine into
+one table for plotting. `data.table::rbindlist()` drops the
+`"dinarch_project"` class, so it needs to be reattached before `plot()`/
+`summary()` will recognize the combined table - `dinarch_project()`'s own
+multi-id output works exactly the same way internally.
+
+```{r, fig.width = 6, fig.height = 4}
+proj_list <- lapply(ids, function(g) {
+  dinarch_project(fits[[g]], dat_list[[g]], id = "id", horizon = 10, nsim = 100, seed = 4)
+})
+
+combined <- data.table::rbindlist(proj_list)
+data.table::setattr(combined, "class", c("dinarch_project", class(combined)))
+
+plot(combined)  # facets by id automatically, since there's more than one
+summary(combined)
+```
+
+The same trick composes with `dinarch_transition_new_para()`: interpolate
+every other series' dynamics toward one reference series' regime, then
+combine the resulting per-series projections the same way.
+
+```{r, fig.width = 6, fig.height = 4}
+end_id <- "A"
+fit_end <- fits[[end_id]]
+
+proj_interp_list <- lapply(setdiff(ids, end_id), function(g) {
+  new_para <- dinarch_transition_new_para(fits[[g]], fit_end, dat_list[[g]], horizon = 10)
+  dinarch_project(fits[[g]], dat_list[[g]], id = "id", horizon = 10, nsim = 100,
+                   new_para = new_para, seed = 5)
+})
+
+combined_interp <- data.table::rbindlist(proj_interp_list)
+data.table::setattr(combined_interp, "class", c("dinarch_project", class(combined_interp)))
+
+plot(combined_interp)
+```
+
+## Bayesian estimation
+
+`dinarch_fit_bayes()` fits the same model via Stan/HMC instead of maximum
+likelihood (requires the `rstan` package), and works as a drop-in
+replacement for `dinarch_fit_ml()` in the calls above.

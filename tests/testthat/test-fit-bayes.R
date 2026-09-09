@@ -1,0 +1,184 @@
+test_that("dinarch_fit_bayes recovers roughly plausible parameters", {
+  testthat::skip_if_not_installed("rstan")
+
+  n <- 200
+  true_beta <- log(4)
+  true_b    <- 0.3
+  true_phi  <- 8
+
+  sim <- dinarch_simulate(n = n, b = true_b, phi = true_phi, beta = true_beta, seed = 55)
+  dat <- data.frame(y = sim$y, time = seq_len(n))
+
+  fit <- dinarch_fit_bayes(
+    dat, y = "y", time = "time", n_lags = 1,
+    iter = 1000, chains = 2, seed = 1
+  )
+
+  expect_s3_class(fit, "dinarch_fit")
+  expect_equal(fit$method, "bayes")
+  expect_equal(fit$coefficients$b, true_b, tolerance = 0.2)
+  expect_equal(exp(unname(fit$coefficients$beta["(Intercept)"])), exp(true_beta), tolerance = 2)
+})
+
+test_that("dinarch_fit_bayes enforces sum(b) < 1 for every posterior draw when n_lags > 1", {
+  testthat::skip_if_not_installed("rstan")
+
+  n <- 150
+  sim <- dinarch_simulate(n = n, b = c(0.3, 0.3), phi = 6, beta = log(3), seed = 44)
+  dat <- data.frame(y = sim$y, time = seq_len(n))
+
+  # Deliberately vague per-lag shape1 so that, under the old independent
+  # per-lag beta(1, 3) priors, sum(b) >= 1 would be readily reachable for
+  # n_lags = 2 - this is the regression case for the Dirichlet reparameterization.
+  fit <- suppressWarnings(dinarch_fit_bayes(
+    dat, y = "y", time = "time", n_lags = 2,
+    iter = 500, chains = 2, seed = 6
+  ))
+
+  expect_true(all(rowSums(fit$posterior$b) < 1))
+})
+
+test_that("dinarch_fit_bayes works with a formula covariate that can take negative values", {
+  testthat::skip_if_not_installed("rstan")
+
+  n <- 200
+  gdp <- rnorm(n)
+  sim <- dinarch_simulate(n = n, b = 0.2, phi = 6,
+                           formula = ~gdp, covariates = data.frame(gdp = gdp),
+                           beta = c(log(3), 0.4), seed = 8)
+  dat <- data.frame(y = sim$y, time = seq_len(n), gdp = gdp)
+
+  fit <- suppressWarnings(dinarch_fit_bayes(
+    dat, y = "y", time = "time", formula = ~gdp, n_lags = 1,
+    iter = 800, chains = 2, seed = 9
+  ))
+
+  expect_setequal(names(fit$coefficients$beta), c("(Intercept)", "gdp"))
+  expect_false(anyNA(fit$coefficients$beta))
+})
+
+test_that("dinarch_fit_bayes does not fail to initialize with large-scale raw covariates", {
+  # Regression test: Stan's default random Uniform(-2, 2) init, combined
+  # with a covariate on a very different raw scale (e.g. population in
+  # the tens of millions), makes exp(eta) overflow to Inf/0 at every
+  # attempted initialization ("Initialization failed"), and the resulting
+  # stanfit with zero samples used to crash confusingly downstream in
+  # colMeans(). The data-driven default init (non-intercept beta always
+  # starts at exactly 0, so eta_init never depends on covariate scale)
+  # fixes this.
+  testthat::skip_if_not_installed("rstan")
+
+  n <- 150
+  population <- stats::runif(n, 1e6, 5e7)
+  gdppc <- stats::runif(n, 500, 40000)
+  dat <- data.frame(y = rpois(n, 5), time = seq_len(n), population = population, gdppc = gdppc)
+
+  fit <- suppressWarnings(dinarch_fit_bayes(
+    dat, y = "y", time = "time", n_lags = 1,
+    formula = ~ 1 + population + gdppc,
+    iter = 300, chains = 1, seed = 1
+  ))
+
+  expect_s3_class(fit, "dinarch_fit")
+  expect_false(anyNA(fit$coefficients$beta))
+})
+
+test_that("a tight custom beta prior pulls the posterior toward its mean despite a strong signal", {
+  testthat::skip_if_not_installed("rstan")
+
+  n <- 300
+  gdp <- rnorm(n)
+  sim <- dinarch_simulate(n = n, b = 0.2, phi = 20, formula = ~gdp,
+                           covariates = data.frame(gdp = gdp), beta = c(log(4), 1.5), seed = 12)
+  dat <- data.frame(y = sim$y, time = seq_len(n), gdp = gdp)
+
+  fit_default <- suppressWarnings(dinarch_fit_bayes(
+    dat, y = "y", time = "time", formula = ~gdp, n_lags = 1,
+    iter = 600, chains = 2, seed = 13
+  ))
+  # a prior sd of 0.01 (on the standardized scale) is tight enough to
+  # dominate this sample size regardless of the true effect (1.5)
+  fit_tight <- suppressWarnings(dinarch_fit_bayes(
+    dat, y = "y", time = "time", formula = ~gdp, n_lags = 1,
+    prior = list(beta = c(0, 0.01)),
+    iter = 600, chains = 2, seed = 13
+  ))
+
+  gdp_default <- abs(unname(fit_default$coefficients$beta["gdp"]))
+  gdp_tight <- abs(unname(fit_tight$coefficients$beta["gdp"]))
+  expect_lt(gdp_tight, gdp_default / 2)
+  expect_lt(gdp_tight, 0.3)
+})
+
+test_that("the beta prior scales with a covariate's own units, so predictions don't depend on arbitrary rescaling", {
+  testthat::skip_if_not_installed("rstan")
+
+  n <- 200
+  pop_raw <- runif(n, 1e5, 1e6)  # e.g. population, on its natural scale
+  sim <- dinarch_simulate(n = n, b = 0.1, phi = 10, formula = ~ log(pop_raw),
+                           covariates = data.frame(pop_raw = pop_raw), beta = c(-2, 0.6), seed = 14)
+  dat <- data.frame(y = sim$y, time = seq_len(n), pop_raw = pop_raw, pop_thousands = pop_raw / 1000)
+
+  fit_raw <- suppressWarnings(dinarch_fit_bayes(
+    dat, y = "y", time = "time", formula = ~ log(pop_raw), n_lags = 1,
+    iter = 500, chains = 2, seed = 15
+  ))
+  fit_rescaled <- suppressWarnings(dinarch_fit_bayes(
+    dat, y = "y", time = "time", formula = ~ log(pop_thousands), n_lags = 1,
+    iter = 500, chains = 2, seed = 15
+  ))
+
+  # log(pop_raw) = log(pop_thousands) + log(1000): same slope on the
+  # covariate, only the intercept should differ (by beta_slope * log(1000))
+  expect_equal(
+    unname(fit_raw$coefficients$beta["log(pop_raw)"]),
+    unname(fit_rescaled$coefficients$beta["log(pop_thousands)"]),
+    tolerance = 0.15
+  )
+})
+
+test_that("dinarch_fit_bayes with a single covariate (n_beta == 1) returns the expected structure", {
+  # Regression test: rep(0, 1) collapses to a bare R scalar, which Stan
+  # rejects for a declared vector[1] parameter ("dims declared=(1); dims
+  # found=()") unless explicitly wrapped with array(..., dim = 1) - this
+  # would error on init before ever reaching the structure checks below.
+  testthat::skip_if_not_installed("rstan")
+
+  dat <- data.frame(y = rpois(100, 3), time = 1:100)
+  # Deliberately few iterations here since this test only checks structure,
+  # not estimation quality - low-ESS warnings are expected and harmless.
+  fit <- suppressWarnings(dinarch_fit_bayes(
+    dat, y = "y", time = "time", n_lags = 1, formula = ~1,
+    iter = 500, chains = 2, seed = 2
+  ))
+
+  expect_true(all(c("b", "phi", "beta") %in% names(fit$coefficients)))
+  expect_length(fit$coefficients$b, 1)
+  expect_identical(names(fit$coefficients$beta), "(Intercept)")
+  expect_s4_class(fit$stanfit, "stanfit")
+  expect_true(is.list(fit$posterior))
+})
+
+test_that("dinarch_fit_bayes pools multiple ids without crossing id boundaries", {
+  testthat::skip_if_not_installed("rstan")
+
+  # id = a series identity (e.g. country), time = order within that
+  # id (e.g. year). Lags must never be taken across an id boundary,
+  # so one observation per id is lost to the n_lags = 1 lag, regardless of
+  # how many ids there are.
+  n <- 60
+  sim1 <- dinarch_simulate(n = n, b = 0.3, phi = 6, beta = log(3), seed = 10)
+  sim2 <- dinarch_simulate(n = n, b = 0.3, phi = 6, beta = log(3), seed = 11)
+
+  dat <- rbind(
+    data.frame(y = sim1$y, time = seq_len(n), id = "A"),
+    data.frame(y = sim2$y, time = seq_len(n), id = "B")
+  )
+
+  fit <- suppressWarnings(dinarch_fit_bayes(
+    dat, y = "y", time = "time", id = "id", n_lags = 1,
+    iter = 500, chains = 2, seed = 3
+  ))
+
+  expect_equal(fit$n_obs, 2 * (n - 1))
+})
