@@ -5,7 +5,7 @@
 \title{Plot a DINARCH projection}
 \usage{
 \method{plot}{dinarch_project}(
-  object,
+  x,
   type = c("ribbon", "spaghetti"),
   probs = c(0.1, 0.9),
   step = FALSE,
@@ -13,6 +13,9 @@
 )
 }
 \arguments{
+\item{x}{A \code{"dinarch_project"} object, i.e. the output of
+\code{\link[=dinarch_project]{dinarch_project()}}.}
+
 \item{type}{\code{"ribbon"} (default) or \code{"spaghetti"} - see above.}
 
 \item{probs}{For \code{type = "ribbon"}, the lower/upper quantile
@@ -25,9 +28,6 @@ straight line between two integers implies values that were never
 observed. Default \code{FALSE}.}
 
 \item{...}{Unused (kept for \code{plot()} generic compatibility).}
-
-\item{x}{A \code{"dinarch_project"} object, i.e. the output of
-\code{\link[=dinarch_project]{dinarch_project()}}.}
 }
 \value{
 A \code{ggplot} object.
