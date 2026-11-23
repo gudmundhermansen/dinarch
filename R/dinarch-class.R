@@ -208,7 +208,7 @@ simulate.dinarch_fit <- function(object, nsim = 10, seed = NULL,
 #' table, or pass it to [plot()] directly.
 #'
 #' [dinarch_project()]'s `new_para` (per-period `b`/`phi`/`beta`
-#' overrides, e.g. from [dinarch_transition_new_para()] or
+#' overrides, e.g. from [dinarch_transition()] or
 #' [dinarch_transition_path()]) and `y_threshold` (a rolling-window
 #' escalation cap) both describe *scenario* constructions
 #' rather than draws from the fitted model's own predictive distribution,

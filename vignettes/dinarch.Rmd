@@ -100,7 +100,7 @@ per-period parameter overrides) - see below.
 
 ## Scenario: transitioning between two fits
 
-Suppose a second fit represents a different regime - `dinarch_transition_new_para()`
+Suppose a second fit represents a different regime - `dinarch_transition()`
 builds a `new_para` table that smoothly interpolates every parameter from
 one fit to another over the forecast horizon, for scenarios like "assume
 the dynamics gradually shift from `fit`'s regime to `fit_b`'s":
@@ -114,7 +114,7 @@ sim_b <- dinarch_simulate(
 dat_b <- data.frame(y = sim_b$y, time = sim_b$time, gdp = gdp)
 fit_b <- dinarch_fit_ml(dat_b, y = "y", time = "time", formula = ~gdp, n_lags = 1)
 
-new_para <- dinarch_transition_new_para(fit, fit_b, dat, horizon = 10)
+new_para <- dinarch_transition(fit, fit_b, dat, horizon = 10)
 scenario <- dinarch_project(fit, dat, horizon = 10, nsim = 500, new_para = new_para, seed = 2)
 plot(scenario)
 ```
@@ -162,7 +162,7 @@ plot(combined)  # facets by id automatically, since there's more than one
 summary(combined)
 ```
 
-The same trick composes with `dinarch_transition_new_para()`: interpolate
+The same trick composes with `dinarch_transition()`: interpolate
 every other series' dynamics toward one reference series' regime, then
 combine the resulting per-series projections the same way.
 
@@ -171,7 +171,7 @@ end_id <- "A"
 fit_end <- fits[[end_id]]
 
 proj_interp_list <- lapply(setdiff(ids, end_id), function(g) {
-  new_para <- dinarch_transition_new_para(fits[[g]], fit_end, dat_list[[g]], horizon = 10)
+  new_para <- dinarch_transition(fits[[g]], fit_end, dat_list[[g]], horizon = 10)
   dinarch_project(fits[[g]], dat_list[[g]], id = "id", horizon = 10, nsim = 100,
                    new_para = new_para, seed = 5)
 })

@@ -64,7 +64,7 @@ table, or pass it to \code{\link[=plot]{plot()}} directly.
 }
 \details{
 \code{\link[=dinarch_project]{dinarch_project()}}'s \code{new_para} (per-period \code{b}/\code{phi}/\code{beta}
-overrides, e.g. from \code{\link[=dinarch_transition_new_para]{dinarch_transition_new_para()}} or
+overrides, e.g. from \code{\link[=dinarch_transition]{dinarch_transition()}} or
 \code{\link[=dinarch_transition_path]{dinarch_transition_path()}}) and \code{y_threshold} (a rolling-window
 escalation cap) both describe \emph{scenario} constructions
 rather than draws from the fitted model's own predictive distribution,
