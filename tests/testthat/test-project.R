@@ -271,44 +271,99 @@ test_that("plot.dinarch_project() connects the projection to the last historical
   expect_true(all(first_pts$y == hist_last))
 })
 
-test_that("summary.dinarch_project() returns one mean/interval row per (id, time)", {
+.summary_proj_fixture <- function() {
   n <- 60
   sim <- dinarch_simulate(n = n, b = 0.3, phi = 8, beta = log(4), seed = 2)
   dat <- data.frame(y = sim$y, time = sim$time)
   fit <- dinarch_fit_ml(dat, y = "y", time = "time", n_lags = 1, vcov = FALSE)
   proj <- dinarch_project(fit, dat, horizon = 5, nsim = 200, seed = 2)
+  list(n = n, dat = dat, fit = fit, proj = proj)
+}
 
-  s <- summary(proj)
+test_that("summary.dinarch_project() defaults to one history row and one full-window row per id", {
+  fx <- .summary_proj_fixture()
+  n <- fx$n
+  s <- summary(fx$proj)
   expect_s3_class(s, "summary.dinarch_project")
-  expect_identical(names(s$table), c("id", "time", "mean", "lower", "upper"))
-  expect_equal(nrow(s$table), 5)
-  expect_equal(s$table$time, (n + 1):(n + 5))
-  expect_true(all(s$table$lower <= s$table$mean & s$table$mean <= s$table$upper))
-  expect_output(print(s), "prediction interval")
+  expect_identical(names(s$table), c("id", "pred", "start", "end", "mean", "q2.5", "q50", "q97.5"))
+  expect_equal(s$table$pred, c(FALSE, TRUE))
+  expect_equal(s$table$start, c(1, n + 1))
+  expect_equal(s$table$end, c(n, n + 5))
+  expect_equal(s$table$mean[1], mean(fx$dat$y))
+  expect_true(all(s$table$q2.5 <= s$table$q50 & s$table$q50 <= s$table$q97.5))
+  expect_output(print(s), "DINARCH projection")
 })
 
-test_that("summary.dinarch_project()'s level controls the interval width", {
-  n <- 60
-  sim <- dinarch_simulate(n = n, b = 0.3, phi = 8, beta = log(4), seed = 2)
-  dat <- data.frame(y = sim$y, time = sim$time)
-  fit <- dinarch_fit_ml(dat, y = "y", time = "time", n_lags = 1, vcov = FALSE)
-  proj <- dinarch_project(fit, dat, horizon = 5, nsim = 500, seed = 2)
+test_that("summary.dinarch_project()'s nsplit splits the simulated window into consecutive blocks", {
+  fx <- .summary_proj_fixture()
+  n <- fx$n
+  s <- summary(fx$proj, nsplit = 2, include_hist = FALSE)
+  expect_true(all(s$table$pred))
+  expect_equal(s$table$start, c(n + 1, n + 3))
+  expect_equal(s$table$end, c(n + 2, n + 5))
 
-  s_narrow <- summary(proj, level = 0.5)
-  s_wide <- summary(proj, level = 0.95)
-  expect_true(all((s_wide$table$upper - s_wide$table$lower) >=
-                     (s_narrow$table$upper - s_narrow$table$lower)))
+  expect_message(s5 <- summary(fx$proj, nsplit = 5), "nsplit >=")
+  expect_equal(nrow(s5$table), 6)
+  expect_equal(s5$table$start[s5$table$pred], (n + 1):(n + 5))
+})
+
+test_that("summary.dinarch_project() with nsplit = NULL gives one row per period", {
+  fx <- .summary_proj_fixture()
+  n <- fx$n
+  s <- summary(fx$proj, nsplit = NULL)
+  expect_equal(nrow(s$table), n + 5)
+  expect_true(all(s$table$start == s$table$end))
+  expect_equal(s$table$mean[!s$table$pred], fx$dat$y)
+})
+
+test_that("summary.dinarch_project()'s probs set the quantile columns and interval width", {
+  fx <- .summary_proj_fixture()
+  s <- summary(fx$proj, probs = c(0.9, 0.1), nsplit = NULL, include_hist = FALSE)
+  expect_identical(names(s$table)[-(1:5)], c("q10", "q90"))
+
+  narrow <- summary(fx$proj, probs = c(0.25, 0.75), nsplit = NULL, include_hist = FALSE)$table
+  wide <- summary(fx$proj, probs = c(0.025, 0.975), nsplit = NULL, include_hist = FALSE)$table
+  expect_true(all(wide$q97.5 - wide$q2.5 >= narrow$q75 - narrow$q25))
+})
+
+test_that("summary.dinarch_project() splits each id's window independently", {
+  mk <- function(g, nn, seed) {
+    s <- dinarch_simulate(n = nn, b = 0.3, phi = 8, beta = log(4), seed = seed)
+    data.frame(y = s$y, time = s$time, id = g)
+  }
+  d2 <- rbind(mk("A", 40, 1), mk("B", 50, 2))
+  f2 <- dinarch_fit_ml(d2, id = "id", n_lags = 1, vcov = FALSE)
+  p2 <- dinarch_project(f2, d2, id = "id", horizon = 4, nsim = 50, seed = 1)
+  s <- summary(p2, nsplit = 2, include_hist = FALSE)
+  expect_equal(s$table$id, c("A", "A", "B", "B"))
+  expect_equal(s$table$start, c(41, 43, 51, 53))
+  expect_equal(s$table$end, c(42, 44, 52, 54))
+})
+
+test_that("summary.dinarch_project() distinguishes history from in-sample replay", {
+  fx <- .summary_proj_fixture()
+  n <- fx$n
+  s <- summary(dinarch_project(fx$fit, fx$dat, nsim = 20, seed = 1))
+  expect_equal(s$table$pred, c(FALSE, TRUE))
+  expect_equal(s$table$start, c(1, 2))
+  expect_equal(s$table$end, c(n, n))
 })
 
 test_that("summary.dinarch_project() works on predict.dinarch_fit()'s output too", {
-  n <- 60
-  sim <- dinarch_simulate(n = n, b = 0.3, phi = 8, beta = log(4), seed = 2)
-  dat <- data.frame(y = sim$y, time = sim$time)
-  fit <- dinarch_fit_ml(dat, y = "y", time = "time", n_lags = 1, vcov = FALSE)
-
-  s <- summary(predict(fit, dat, horizon = 5, nsim = 50, seed = 1))
+  fx <- .summary_proj_fixture()
+  n <- fx$n
+  s <- summary(predict(fx$fit, fx$dat, horizon = 5, nsim = 50, seed = 1),
+               nsplit = NULL, include_hist = FALSE)
   expect_s3_class(s, "summary.dinarch_project")
-  expect_equal(nrow(s$table), 5)
+  expect_equal(s$table$start, (n + 1):(n + 5))
+})
+
+test_that("summary.dinarch_project() validates its arguments", {
+  proj <- .summary_proj_fixture()$proj
+  expect_error(summary(proj, nsplit = 0))
+  expect_error(summary(proj, nsplit = 1.5))
+  expect_error(summary(proj, probs = 1))
+  expect_error(summary(proj, include_hist = NA))
 })
 
 .as_proj_fixture <- function() {

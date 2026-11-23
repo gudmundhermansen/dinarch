@@ -498,44 +498,101 @@ plot.dinarch_project <- function(object, type = c("ribbon", "spaghetti"), probs 
   p + ggplot2::labs(x = "time", y = "y")
 }
 
+#' Consecutive block index for `n_t` ordered periods split into `nsplit`
+#' near-equal blocks (later blocks get the extra period); `NULL` = one block
+#' per period. `nsplit` is capped at `n_t`.
+#' @noRd
+.dinarch_time_blocks <- function(n_t, nsplit) {
+  if (is.null(nsplit)) return(seq_len(n_t))
+  k <- min(nsplit, n_t)
+  as.integer(ceiling(seq_len(n_t) * k / n_t))
+}
+
 #' Summarize a DINARCH projection/prediction
 #'
-#' Collapses a [dinarch_project()]/[predict.dinarch_fit()] result's `nsim`
-#' simulated/projected replicates (`pred == TRUE`; historical rows
-#' are real data, not a distribution, so they're excluded here) at each
-#' `(id, time)` into a mean and a simulation-based prediction interval - a
-#' compact numeric alternative to [plot()]. `time` carries its usual
-#' meaning: for an out-of-sample call (`horizon` set), it's periods ahead
-#' of the last observed period; for an in-sample call, it's the historical
-#' period being replayed.
+#' Collapses a [dinarch_project()]/[predict.dinarch_fit()] result into the
+#' mean and simulation quantiles of `y` over blocks of consecutive periods -
+#' a compact numeric alternative to [plot()]. Simulated rows (`pred == TRUE`)
+#' pool all `nsim` replicates within each block; historical rows
+#' (`pred == FALSE`, real data repeated once per replicate) summarize the
+#' observed series itself. Blocks are formed separately for each id, so ids
+#' with different time ranges are split independently.
 #'
 #' @param object A `"dinarch_project"` object.
-#' @param level Prediction interval level (default 0.95, i.e. the
-#'   simulated draws' 2.5th/97.5th percentiles at each period).
+#' @param probs Quantiles of `y` to report (default `c(0.025, 0.5, 0.975)`),
+#'   returned as columns `q2.5`, `q50`, `q97.5`, etc.
+#' @param nsplit Number of consecutive blocks each id's simulated window is
+#'   split into (default 1: the whole window; capped at the number of
+#'   simulated periods). History is always one block per id. `NULL` gives one
+#'   row per period, for history and simulated rows alike.
+#' @param include_hist Whether to include rows summarizing the historical
+#'   (`pred == FALSE`) data.
 #' @param ... Unused.
 #'
-#' @return An object of class `"summary.dinarch_project"`, printing as a
-#'   table with columns `id`, `time`, `mean`, `lower`, `upper`.
+#' @return An object of class `"summary.dinarch_project"`: a list whose
+#'   `table` element is a `data.table` with columns `id`, `pred`, `start`,
+#'   `end` (inclusive first/last `time` of the block), `mean`, and one
+#'   `q<percent>` column per `probs` entry, sorted by `id`, `pred`, `start`.
 #' @export
-summary.dinarch_project <- function(object, level = 0.95, ...) {
-  stopifnot(is.numeric(level), length(level) == 1, level > 0, level < 1)
-  alpha <- 1 - level
-  probs <- c(alpha / 2, 1 - alpha / 2)
+summary.dinarch_project <- function(object, probs = c(0.025, 0.5, 0.975), nsplit = 1,
+                                    include_hist = TRUE, ...) {
+  stopifnot("dinarch_project" %in% class(object))
+  stopifnot(
+    is.numeric(probs), length(probs) >= 1,
+    all(probs > 0 & probs < 1)
+  )
+  probs <- sort(unique(probs))
+  if (!is.null(nsplit)) {
+    stopifnot(is.numeric(nsplit), length(nsplit) == 1, nsplit >= 1, nsplit == round(nsplit))
+  }
+  stopifnot(is.logical(include_hist), length(include_hist) == 1, !is.na(include_hist))
 
-  proj <- object[object$pred == TRUE]
-  agg <- proj[, list(
-    mean  = mean(y),
-    lower = stats::quantile(y, probs[1]),
-    upper = stats::quantile(y, probs[2])
-  ), by = c("id", "time")]
-  data.table::setorderv(agg, c("id", "time"))
+  dt <- data.table::as.data.table(object)
+  if (!any(dt$pred)) stop("`object` has no simulated rows (pred == TRUE) to summarize.")
+  if (!include_hist) dt <- dt[dt$pred == TRUE, ]
 
-  structure(list(table = agg, level = level), class = "summary.dinarch_project")
+  pct <- probs * 100
+  pct_chr <- sub("\\.?0+$", "", formatC(pct, format = "f", digits = 6))
+  qnames <- paste0("q", pct_chr)
+  summarise_y <- function(y) {
+    q <- stats::quantile(y, probs = probs, names = FALSE)
+    c(list(mean = mean(y)), stats::setNames(as.list(q), qnames))
+  }
+
+  # One block index per distinct (id, pred, time), computed within each id so
+  # ids with different time ranges are split independently.
+  keys <- unique(dt[, c("id", "pred", "time")])
+  data.table::setorderv(keys, c("id", "pred", "time"))
+  pred_keys <- keys[keys$pred == TRUE, ]
+  if (!is.null(nsplit) && nsplit > 1 && any(pred_keys[, .N, by = "id"][["N"]] <= nsplit)) {
+    message("nsplit >= the number of simulated periods for at least one id; summarizing each of those periods separately.")
+  }
+  pred_keys[, "block" := .dinarch_time_blocks(.N, nsplit), by = "id"]
+  hist_keys <- keys[keys$pred == FALSE, ]
+  if (nrow(hist_keys) > 0L) {
+    hist_keys[, "block" := .dinarch_time_blocks(.N, if (is.null(nsplit)) NULL else 1L), by = "id"]
+    keys <- data.table::rbindlist(list(hist_keys, pred_keys), use.names = TRUE)
+  } else {
+    keys <- pred_keys
+  }
+
+  dt <- merge(dt, keys, by = c("id", "pred", "time"))
+  agg <- dt[, c(
+    list(start = min(.SD[["time"]]), end = max(.SD[["time"]])),
+    summarise_y(.SD[["y"]])
+  ), by = c("id", "pred", "block"), .SDcols = c("time", "y")]
+  agg[, "block" := NULL]
+  data.table::setorderv(agg, c("id", "pred", "start"))
+
+  structure(
+    list(table = agg, probs = probs, nsplit = nsplit, include_hist = include_hist),
+    class = "summary.dinarch_project"
+  )
 }
 
 #' @export
 print.summary.dinarch_project <- function(x, ...) {
-  cat(sprintf("DINARCH projection - %.0f%% simulation-based prediction interval\n", 100 * x$level))
+  cat("DINARCH projection\n")
   cat(strrep("-", 50), "\n", sep = "")
   print(as.data.frame(x$table), row.names = FALSE, digits = 4)
   invisible(x)

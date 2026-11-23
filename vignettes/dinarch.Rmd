@@ -76,13 +76,16 @@ by the `pred` column (`TRUE` for simulated/forecast draws) - so
 `pred[sim == 1]` is always one complete, continuously-indexed series
 (history through the forecast).
 
-`summary()` collapses the simulated draws (`pred == TRUE`) into a
-mean and prediction interval per period; `plot()` shows the same thing as a
+`summary()` collapses the draws into the mean and quantiles of `y` over
+blocks of consecutive periods: one row for the observed history
+(`pred == FALSE`), and the simulated window (`pred == TRUE`) split into
+`nsplit` blocks, each labelled by its inclusive `start`/`end` time
+(`nsplit = NULL` gives one row per period). `plot()` shows the draws as a
 shaded band (pass `type = "spaghetti"` to instead draw every draw as its
 own thin line).
 
 ```{r, fig.width = 6, fig.height = 4}
-summary(pred)
+summary(pred, nsplit = 3, probs = c(0.025, 0.25, 0.5, 0.75, 0.975), include_hist = T)
 plot(pred)
 ```
 
