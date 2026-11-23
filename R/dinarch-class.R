@@ -240,7 +240,7 @@ simulate.dinarch_fit <- function(object, nsim = 10, seed = NULL,
 #'   and [summary.dinarch_project()] both work on it directly), one row
 #'   per `(id, time, sim)` observation - both `data`'s historical rows
 #'   (repeated per `sim`) and the predictive draws, see
-#'   [dinarch_project()]'s `historical` column.
+#'   [dinarch_project()]'s `pred` column.
 #' @export
 predict.dinarch_fit <- function(object, data, horizon = NULL, nsim = 1000, new_data = NULL,
                                  use_draw = NULL, seed = NULL, ...) {

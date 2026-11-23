@@ -49,7 +49,7 @@ A \code{data.table} (also classed \code{"dinarch_project"}, so \code{\link[=plot
 and \code{\link[=summary.dinarch_project]{summary.dinarch_project()}} both work on it directly), one row
 per \verb{(id, time, sim)} observation - both \code{data}'s historical rows
 (repeated per \code{sim}) and the predictive draws, see
-\code{\link[=dinarch_project]{dinarch_project()}}'s \code{historical} column.
+\code{\link[=dinarch_project]{dinarch_project()}}'s \code{pred} column.
 }
 \description{
 Draws \code{nsim} samples from the model's predictive distribution via

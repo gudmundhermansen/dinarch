@@ -20,7 +20,7 @@ table with columns \code{id}, \code{time}, \code{mean}, \code{lower}, \code{uppe
 }
 \description{
 Collapses a \code{\link[=dinarch_project]{dinarch_project()}}/\code{\link[=predict.dinarch_fit]{predict.dinarch_fit()}} result's \code{nsim}
-simulated/projected replicates (\code{historical == FALSE}; historical rows
+simulated/projected replicates (\code{pred == TRUE}; historical rows
 are real data, not a distribution, so they're excluded here) at each
 \verb{(id, time)} into a mean and a simulation-based prediction interval - a
 compact numeric alternative to \code{\link[=plot]{plot()}}. \code{time} carries its usual

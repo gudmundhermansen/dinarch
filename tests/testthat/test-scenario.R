@@ -67,7 +67,7 @@ test_that("dinarch_transition_new_para's output plugs directly into dinarch_proj
 
   np <- dinarch_transition_new_para(fit_a, fit_b, dat_a, horizon = 20)
   proj <- dinarch_project(fit_a, dat_a, horizon = 20, nsim = 10, new_para = np, seed = 1)
-  future <- proj[!proj$historical]
+  future <- proj[proj$pred]
   expect_equal(nrow(future), 20 * 10)
 })
 

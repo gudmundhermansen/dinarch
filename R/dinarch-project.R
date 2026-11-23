@@ -81,8 +81,8 @@
 #'   [plot.dinarch_project()] works, but otherwise behaves exactly like an
 #'   ordinary `data.table` - nothing about the usual `data.table` syntax
 #'   changes) with columns `id`, `time`, `sim` (replicate id, `1:nsim`),
-#'   `historical` (`TRUE` for `data`'s real observations, `FALSE` for
-#'   simulated/projected draws), `y`, and the raw covariate columns
+#'   `pred` (`TRUE` for simulated/projected draws, `FALSE` for `data`'s
+#'   real observations), `y`, and the raw covariate columns
 #'   `object$formula` references (whatever values were actually used, so
 #'   the output is self-documenting even when mixing defaults with
 #'   `new_data` overrides). `data`'s historical rows are repeated once per
@@ -222,7 +222,7 @@ dinarch_project <- function(object, data,
   }
 
   # --- simulate: nsim replicates x ids, each prepended with the full
-  # historical block for that id (marked historical = TRUE) so every
+  # historical block for that id (marked pred = FALSE) so every
   # `sim`'s rows form one complete, continuously-indexed series. -----------
   replicate_results <- vector("list", nsim)
   for (s in seq_len(nsim)) {
@@ -259,10 +259,10 @@ dinarch_project <- function(object, data,
       sim$time <- sc$idx_seq
       sim$id <- sc$id
       if (length(cov_vars) > 0) sim <- cbind(sim, sc$cov_df)
-      sim$historical <- FALSE
+      sim$pred <- TRUE
 
       hist_block <- data.table::copy(sc$hist)
-      hist_block[, "historical" := TRUE]
+      hist_block[, "pred" := FALSE]
 
       data.table::rbindlist(list(hist_block, sim), use.names = TRUE)
     })
@@ -273,7 +273,7 @@ dinarch_project <- function(object, data,
   }
 
   out <- data.table::rbindlist(replicate_results)
-  data.table::setcolorder(out, c("id", "time", "sim", "historical", "y"))
+  data.table::setcolorder(out, c("id", "time", "sim", "pred", "y"))
   data.table::setattr(out, "class", c("dinarch_project", class(out)))
   out[]
 }
@@ -294,7 +294,7 @@ dinarch_project <- function(object, data,
 #' Plot a DINARCH projection
 #'
 #' A minimal `ggplot2` plot of a [dinarch_project()] result: the historical
-#' `y` (`x$historical == TRUE`, deduplicated across replicates) as a single
+#' `y` (`x$pred == FALSE`, deduplicated across replicates) as a single
 #' line, plus either every simulated replicate as its own thin line
 #' (`type = "spaghetti"`) or a shaded quantile ribbon with a median line
 #' (`type = "ribbon"`, the default) summarizing the replicates at each
@@ -337,9 +337,9 @@ plot.dinarch_project <- function(x, type = c("ribbon", "spaghetti"), probs = c(0
 
   # historical rows are identical across every `sim` replicate - dedupe to
   # the single historical line rather than drawing nsim overlapping copies.
-  history <- unique(x[x$historical == TRUE, c("id", "time", "y"), with = FALSE])
+  history <- unique(x[x$pred == FALSE, c("id", "time", "y"), with = FALSE])
   data.table::setorderv(history, c("id", "time"))
-  proj <- x[x$historical == FALSE]
+  proj <- x[x$pred == TRUE]
 
   # Last historical point strictly before each id's first projected
   # time - prepended below so the projection connects to, rather than
@@ -420,7 +420,7 @@ plot.dinarch_project <- function(x, type = c("ribbon", "spaghetti"), probs = c(0
 #' Summarize a DINARCH projection/prediction
 #'
 #' Collapses a [dinarch_project()]/[predict.dinarch_fit()] result's `nsim`
-#' simulated/projected replicates (`historical == FALSE`; historical rows
+#' simulated/projected replicates (`pred == TRUE`; historical rows
 #' are real data, not a distribution, so they're excluded here) at each
 #' `(id, time)` into a mean and a simulation-based prediction interval - a
 #' compact numeric alternative to [plot()]. `time` carries its usual
@@ -441,7 +441,7 @@ summary.dinarch_project <- function(object, level = 0.95, ...) {
   alpha <- 1 - level
   probs <- c(alpha / 2, 1 - alpha / 2)
 
-  proj <- object[object$historical == FALSE]
+  proj <- object[object$pred == TRUE]
   agg <- proj[, list(
     mean  = mean(y),
     lower = stats::quantile(y, probs[1]),

@@ -98,8 +98,8 @@ A \code{data.table} (also classed \code{"dinarch_project"}, so
 \code{\link[=plot.dinarch_project]{plot.dinarch_project()}} works, but otherwise behaves exactly like an
 ordinary \code{data.table} - nothing about the usual \code{data.table} syntax
 changes) with columns \code{id}, \code{time}, \code{sim} (replicate id, \code{1:nsim}),
-\code{historical} (\code{TRUE} for \code{data}'s real observations, \code{FALSE} for
-simulated/projected draws), \code{y}, and the raw covariate columns
+\code{pred} (\code{TRUE} for simulated/projected draws, \code{FALSE} for \code{data}'s
+real observations), \code{y}, and the raw covariate columns
 \code{object$formula} references (whatever values were actually used, so
 the output is self-documenting even when mixing defaults with
 \code{new_data} overrides). \code{data}'s historical rows are repeated once per
