@@ -310,3 +310,41 @@ test_that("summary.dinarch_project() works on predict.dinarch_fit()'s output too
   expect_s3_class(s, "summary.dinarch_project")
   expect_equal(nrow(s$table), 5)
 })
+
+.as_proj_fixture <- function() {
+  make_proj <- function(g, seed) {
+    sim <- dinarch_simulate(n = 40, b = 0.3, phi = 8, beta = log(4), seed = seed)
+    dat <- data.frame(y = sim$y, time = sim$time, id = g)
+    fit <- dinarch_fit_ml(dat, n_lags = 1, vcov = FALSE)
+    dinarch_project(fit, dat, id = "id", horizon = 3, nsim = 5, seed = 1)
+  }
+  list(A = make_proj("A", 1), B = make_proj("B", 2))
+}
+
+test_that("as_dinarch_project() row-binds a list of projections into one classed table", {
+  p <- .as_proj_fixture()
+  combined <- as_dinarch_project(p)
+  expect_s3_class(combined, "dinarch_project")
+  expect_equal(nrow(combined), nrow(p$A) + nrow(p$B))
+  expect_identical(unique(combined$id), c("A", "B"))
+})
+
+test_that("as_dinarch_project() doesn't modify its input and never duplicates the class", {
+  p <- .as_proj_fixture()
+  dt <- data.table::as.data.table(p$A)
+  expect_false(inherits(dt, "dinarch_project"))
+  as_dinarch_project(dt)
+  expect_false(inherits(dt, "dinarch_project"))
+
+  expect_equal(sum(class(as_dinarch_project(p$A)) == "dinarch_project"), 1)
+})
+
+test_that("as_dinarch_project() rejects malformed input", {
+  p <- .as_proj_fixture()
+  expect_error(as_dinarch_project(list(p$A, p$A)), "duplicated")
+  expect_error(as_dinarch_project(p$A[, !"sim"]), "missing required column")
+  bad <- data.table::copy(p$A)
+  bad[, pred := as.integer(pred)]
+  expect_error(as_dinarch_project(bad), "must be logical")
+  expect_error(as_dinarch_project(list(p$A, 1)), "list of them")
+})

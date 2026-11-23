@@ -141,19 +141,19 @@ fits <- lapply(ids, function(g) dinarch_fit_ml(dat_list[[g]], n_lags = 1, vcov =
 names(fits) <- ids
 ```
 
-Project each series from its own fit and its own data, then combine into
-one table for plotting. `data.table::rbindlist()` drops the
-`"dinarch_project"` class, so it needs to be reattached before `plot()`/
-`summary()` will recognize the combined table - `dinarch_project()`'s own
-multi-id output works exactly the same way internally.
+Project each series from its own fit and its own data, then combine them
+with `as_dinarch_project()`: given a list of projections it row-binds them
+and reattaches the `"dinarch_project"` class (which a plain `rbind()`/
+`data.table::rbindlist()` drops), after checking the result still has the
+shape `plot()`/`summary()` expect - including that no two series share an
+`id`.
 
 ```{r, fig.width = 6, fig.height = 4}
 proj_list <- lapply(ids, function(g) {
   dinarch_project(fits[[g]], dat_list[[g]], id = "id", horizon = 10, nsim = 100, seed = 4)
 })
 
-combined <- data.table::rbindlist(proj_list)
-data.table::setattr(combined, "class", c("dinarch_project", class(combined)))
+combined <- as_dinarch_project(proj_list)
 
 plot(combined)  # facets by id automatically, since there's more than one
 summary(combined)
@@ -173,8 +173,7 @@ proj_interp_list <- lapply(setdiff(ids, end_id), function(g) {
                    new_para = new_para, seed = 5)
 })
 
-combined_interp <- data.table::rbindlist(proj_interp_list)
-data.table::setattr(combined_interp, "class", c("dinarch_project", class(combined_interp)))
+combined_interp <- as_dinarch_project(proj_interp_list)
 
 plot(combined_interp)
 ```

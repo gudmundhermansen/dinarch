@@ -4,11 +4,11 @@
 
 #' Check that required columns are present in a data frame / data.table
 #' @noRd
-.check_columns <- function(data, cols) {
+.check_columns <- function(data, cols, arg_name = "data") {
   missing_cols <- setdiff(cols, names(data))
   if (length(missing_cols) > 0) {
     stop(sprintf(
-      "`data` is missing required column(s): %s.",
+      "`%s` is missing required column(s): %s.", arg_name,
       paste(missing_cols, collapse = ", ")
     ))
   }

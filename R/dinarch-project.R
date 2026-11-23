@@ -274,8 +274,85 @@ dinarch_project <- function(object, data,
 
   out <- data.table::rbindlist(replicate_results)
   data.table::setcolorder(out, c("id", "time", "sim", "pred", "y"))
-  data.table::setattr(out, "class", c("dinarch_project", class(out)))
+  out <- .new_dinarch_project(out)
   out[]
+}
+
+#' Attach the "dinarch_project" class to a data.table (no validation;
+#' idempotent - the class is never duplicated)
+#' @noRd
+.new_dinarch_project <- function(x) {
+  data.table::setattr(x, "class", c("dinarch_project", setdiff(class(x), "dinarch_project")))
+  x
+}
+
+#' Coerce to a DINARCH projection
+#'
+#' Validates that `x` has the shape [dinarch_project()]'s output has, and
+#' returns it classed `"dinarch_project"` so `plot()`/`summary()` dispatch
+#' on it. The main use is combining per-series projections (each from its
+#' own fit and data) into one table: a plain `rbind()`/
+#' `data.table::rbindlist()` drops the `"dinarch_project"` class, while
+#' `as_dinarch_project()` takes the list directly, row-binds it
+#' (`data.table::rbindlist(use.names = TRUE, fill = TRUE)` - columns are
+#' matched by name, and a covariate present in only some projections is
+#' filled with `NA` elsewhere), and reattaches the class.
+#'
+#' Checks that the result has columns `id`, `time`, `sim`, `pred`
+#' and `y`, none containing missing values; that `pred` is logical,
+#' `sim` whole numbers, and `y` non-negative integers; and that no
+#' `(id, time, sim)` combination appears twice - which is what happens when
+#' two combined projections share an `id` label (e.g. both left at the
+#' single-id default `0`), and would otherwise silently merge the two
+#' series in `plot()`/`summary()`. The input is never modified in place;
+#' a copy is returned.
+#'
+#' @param x A `data.frame`/`data.table` shaped like [dinarch_project()]'s
+#'   output, or a list of them.
+#' @return A `data.table`, also classed `"dinarch_project"`.
+#' @seealso [dinarch_project()]
+#' @examples
+#' sims <- lapply(1:2, function(i) {
+#'   dinarch_simulate(n = 40, b = 0.3, phi = 8, beta = log(4), seed = i)
+#' })
+#' dats <- lapply(seq_along(sims), function(i) {
+#'   data.frame(y = sims[[i]]$y, time = sims[[i]]$time, id = LETTERS[i])
+#' })
+#' projs <- lapply(dats, function(d) {
+#'   fit <- dinarch_fit_ml(d, n_lags = 1, vcov = FALSE)
+#'   dinarch_project(fit, d, id = "id", horizon = 5, nsim = 10, seed = 1)
+#' })
+#' combined <- as_dinarch_project(projs)
+#' summary(combined)
+#' @export
+as_dinarch_project <- function(x) {
+  if (is.data.frame(x)) {
+    x <- data.table::as.data.table(x)
+  } else if (is.list(x) && all(vapply(x, is.data.frame, logical(1)))) {
+    x <- data.table::rbindlist(x, use.names = TRUE, fill = TRUE)
+  } else {
+    stop("`x` must be a data.frame/data.table, or a list of them.")
+  }
+
+  required_cols <- c("id", "time", "sim", "pred", "y")
+  .check_columns(x, required_cols, arg_name = "x")
+  for (col in required_cols) .check_no_na(x[[col]], col)
+
+  if (!is.logical(x$pred)) {
+    stop("`pred` must be logical (TRUE for simulated draws, FALSE for observed rows).")
+  }
+  if (!is.numeric(x$sim) || any(x$sim != round(x$sim))) {
+    stop("`sim` must be whole numbers (replicate ids).")
+  }
+  if (!is.numeric(x$y)) {
+    stop("`y` must be non-negative integers (a count series).")
+  }
+  .check_nonneg_integer(x$y, "y")
+  if (anyDuplicated(x, by = c("id", "time", "sim")) > 0) {
+    stop("`x` has duplicated (id, time, sim) rows - combined projections must each use distinct `id` values.")
+  }
+
+  .new_dinarch_project(x)[]
 }
 
 # Expand one id's sorted (time, lo, hi, med) rows into a step ("post",
