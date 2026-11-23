@@ -378,11 +378,12 @@ plot.dinarch_project <- function(object, type = c("ribbon", "spaghetti"), probs 
       spaghetti_data <- data.table::rbindlist(list(conn, spaghetti_data), use.names = TRUE)
     }
     data.table::setorderv(spaghetti_data, c("id", "sim", "time"))
+    a <- .alpha_est(spaghetti_data, group = c("id", "sim"), x = "time")
 
     p <- p + line_geom(
       data = spaghetti_data,
       ggplot2::aes(x = .data$time, y = .data$y, group = interaction(.data$id, .data$sim)),
-      colour = "steelblue", alpha = 0.15
+      colour = "steelblue", alpha = a
     )
   } else {
     agg <- proj[, list(

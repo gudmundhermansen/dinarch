@@ -311,3 +311,26 @@
     n = nrow(Yc)
   )
 }
+
+
+#' Optimal alpha estimation
+#'
+#' Estimate the optimal alpha level per line based on counts of overlapping lines.
+#'
+#' @param dt Panel data used to plot lines
+#' @param group The combination of variables that identify each unique line
+#' @param x The x-axis variable
+#' @param y The y-axis variable
+#' @param c The max alpha target
+.alpha_est <- function(dt, group = c("id", "sim"), x = "time", y = "y", c = 0.95) {
+
+  x_bin <- cut(dt[[x]], breaks = 200, labels = FALSE)
+  y_bin <- cut(dt[[y]], breaks = 200, labels = FALSE)
+
+  overlap_counts <- unique(
+    dt[, group, with = FALSE][, `:=`(x_bin = x_bin, y_bin = y_bin)]
+  )[, .N, by = c("x_bin", "y_bin")]
+
+  m <- stats::quantile(overlap_counts$N, c)
+  1 - (1 - c)^(1/m)
+}
