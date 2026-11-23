@@ -70,7 +70,7 @@
 #' @noRd
 .add_lag_columns <- function(Y, n_lags, by = "id") {
   lag_cols <- paste0("y", seq_len(n_lags))
-  Y[, (lag_cols) := data.table::shift(y, n = seq_len(n_lags)), by = by]
+  Y[, (lag_cols) := data.table::shift(.SD[["y"]], n = seq_len(n_lags)), by = by, .SDcols = "y"]
   Y
 }
 
@@ -247,7 +247,7 @@
     time = data[[time]],
     y    = data[[y]]
   )
-  for (v in cov_vars) Y[, (v) := data[[v]][orig_row]]
+  for (v in cov_vars) data.table::set(Y, j = v, value = data[[v]][Y$orig_row])
 
   data.table::setorderv(Y, c("id", "time"))
   .check_time_regularity(Y, has_id = !is.null(id))

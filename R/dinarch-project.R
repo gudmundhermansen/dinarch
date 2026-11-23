@@ -463,11 +463,12 @@ plot.dinarch_project <- function(object, type = c("ribbon", "spaghetti"), probs 
       colour = "steelblue", alpha = a
     )
   } else {
-    agg <- proj[, list(
-      lo  = stats::quantile(y, probs[1]),
-      hi  = stats::quantile(y, probs[2]),
-      med = stats::median(y)
-    ), by = c("id", "time")]
+    ribbon_stats <- function(v) list(
+      lo  = stats::quantile(v, probs[1]),
+      hi  = stats::quantile(v, probs[2]),
+      med = stats::median(v)
+    )
+    agg <- proj[, ribbon_stats(.SD[["y"]]), by = c("id", "time"), .SDcols = "y"]
 
     if (has_connector) {
       conn <- data.table::data.table(

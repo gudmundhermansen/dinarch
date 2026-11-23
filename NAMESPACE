@@ -19,12 +19,14 @@ export(dinarch_transition_new_para)
 export(dinarch_transition_path)
 importFrom(data.table,
   ":=",
+  .N,
+  .SD,
   data.table,
   is.data.table,
   setDT,
-  setorder,
   shift
 )
+importFrom(rlang,.data)
 importFrom(stats,
   dnbinom,
   optim,
