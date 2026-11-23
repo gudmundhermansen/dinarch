@@ -55,7 +55,10 @@ the simulated window not covered here falls back to the default: the
 last observed row of \code{data} held fixed (out-of-sample) or the real
 historical value (in-sample - lets you re-simulate history under an
 alternative covariate path, e.g. for counterfactual checks; \code{time} is
-\emph{not} required to be after the last observed value for this reason).}
+\emph{not} required to be after the last observed value for this reason).
+With \code{horizon} set, a warning is issued if \code{new_data} ends before the
+last forecast period (later periods revert to the last observed
+covariate values) or has rows after it (ignored).}
 
 \item{new_para}{Optional \code{data.frame}/\code{data.table}, same \verb{(id, time)} shape as \code{new_data}, with columns \code{phi}, \verb{b1, ..., bk}
 (\code{k = object$n_lags}, always \code{b1} even at \code{n_lags = 1} - never bare
@@ -71,7 +74,10 @@ replicate's posterior draw, see \code{use_draw}). A column named the same
 as a raw covariate (e.g. \code{"gdp"}) means "override \code{gdp}'s
 \emph{coefficient}" here, vs. "override \code{gdp}'s \emph{value}" as a \code{new_data}
 column - the two tables are separate, so there's no ambiguity in
-code, just something to keep straight when naming columns.}
+code, just something to keep straight when naming columns. With
+\code{horizon} set, a warning is issued if \code{new_para} ends before the last
+forecast period (later periods revert to the fitted parameters) or has
+rows after it (ignored).}
 
 \item{use_draw}{For Bayesian fits only: \code{NULL} (default) uses the
 posterior mean for every replicate; \code{"random"} samples a fresh

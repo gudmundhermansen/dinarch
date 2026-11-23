@@ -44,6 +44,9 @@
 #'   historical value (in-sample - lets you re-simulate history under an
 #'   alternative covariate path, e.g. for counterfactual checks; `time` is
 #'   *not* required to be after the last observed value for this reason).
+#'   With `horizon` set, a warning is issued if `new_data` ends before the
+#'   last forecast period (later periods revert to the last observed
+#'   covariate values) or has rows after it (ignored).
 #' @param new_para Optional `data.frame`/`data.table`, same `(id,
 #'   time)` shape as `new_data`, with columns `phi`, `b1, ..., bk`
 #'   (`k = object$n_lags`, always `b1` even at `n_lags = 1` - never bare
@@ -59,7 +62,10 @@
 #'   as a raw covariate (e.g. `"gdp"`) means "override `gdp`'s
 #'   *coefficient*" here, vs. "override `gdp`'s *value*" as a `new_data`
 #'   column - the two tables are separate, so there's no ambiguity in
-#'   code, just something to keep straight when naming columns.
+#'   code, just something to keep straight when naming columns. With
+#'   `horizon` set, a warning is issued if `new_para` ends before the last
+#'   forecast period (later periods revert to the fitted parameters) or has
+#'   rows after it (ignored).
 #' @param use_draw For Bayesian fits only: `NULL` (default) uses the
 #'   posterior mean for every replicate; `"random"` samples a fresh
 #'   posterior draw per replicate, propagating full parameter uncertainty
@@ -155,6 +161,7 @@ dinarch_project <- function(object, data,
 
   any_data_matched <- is.null(new_data)
   any_para_matched <- is.null(new_para)
+  data_short_ids <- data_long_ids <- para_short_ids <- para_long_ids <- NULL
 
   # --- per-id scaffolding: y_init, time sequence, default (+ new_data-
   # overridden) covariates, matched new_para overrides, and the full
@@ -193,6 +200,10 @@ dinarch_project <- function(object, data,
           cov_df[pos[matched], (col) := nd_g[[col]][matched]]
         }
       }
+      if (!is_insample) {
+        if (any(matched) && max(pos[matched]) < horizon) data_short_ids <<- c(data_short_ids, g)
+        if (any(nd_g$time > max(idx_seq))) data_long_ids <<- c(data_long_ids, g)
+      }
     }
 
     np_match <- NULL
@@ -203,6 +214,10 @@ dinarch_project <- function(object, data,
       if (any(matched)) {
         any_para_matched <<- TRUE
         np_match <- list(pos = pos[matched], data = np_g[matched])
+      }
+      if (!is_insample) {
+        if (any(matched) && max(pos[matched]) < horizon) para_short_ids <<- c(para_short_ids, g)
+        if (any(np_g$time > max(idx_seq))) para_long_ids <<- c(para_long_ids, g)
       }
     }
 
@@ -219,6 +234,31 @@ dinarch_project <- function(object, data,
   }
   if (!is.null(new_para) && !any_para_matched) {
     warning("`new_para` did not match any (id, time) pair in the simulated window; using fitted parameters for all periods.")
+  }
+  .fmt_ids <- function(g) if (multi_id) sprintf(" (id(s): %s)", paste(g, collapse = ", ")) else ""
+  if (!is.null(new_data) && any_data_matched && length(data_short_ids) > 0) {
+    warning(sprintf(
+      "`new_data` ends before the last forecast period%s; later periods use the last observed covariate values. Check that it covers all `horizon` periods.",
+      .fmt_ids(data_short_ids)
+    ), call. = FALSE)
+  }
+  if (!is.null(new_data) && any_data_matched && length(data_long_ids) > 0) {
+    warning(sprintf(
+      "`new_data` has rows after the last forecast period%s; they are ignored. Check that it covers all `horizon` periods.",
+      .fmt_ids(data_long_ids)
+    ), call. = FALSE)
+  }
+  if (!is.null(new_para) && any_para_matched && length(para_short_ids) > 0) {
+    warning(sprintf(
+      "`new_para` ends before the last forecast period%s; later periods use the fitted parameters. Check that it covers all `horizon` periods (e.g. the same `horizon` passed to dinarch_transition()).",
+      .fmt_ids(para_short_ids)
+    ), call. = FALSE)
+  }
+  if (!is.null(new_para) && any_para_matched && length(para_long_ids) > 0) {
+    warning(sprintf(
+      "`new_para` has rows after the last forecast period%s; they are ignored. Check that it covers all `horizon` periods (e.g. the same `horizon` passed to dinarch_transition()).",
+      .fmt_ids(para_long_ids)
+    ), call. = FALSE)
   }
 
   # --- simulate: nsim replicates x ids, each prepended with the full

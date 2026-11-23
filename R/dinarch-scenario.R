@@ -82,7 +82,9 @@ dinarch_transition_path <- function(from, to, n,
 #'   `data` argument (same validation, same `y`/`time`/`id` column-name
 #'   convention).
 #' @param horizon Number of forecast steps - must match the `horizon` you
-#'   pass to [dinarch_project()].
+#'   pass to [dinarch_project()]; a mismatch makes [dinarch_project()]
+#'   warn: a shorter transition reverts to `fit_from`'s parameters after
+#'   its last step, and a longer one is cut off.
 #' @param shape,range Passed to [dinarch_transition_path()] - one shared
 #'   interpolation shape for every parameter.
 #' @param y,time,id Column names (strings) in `data` - see

@@ -24,7 +24,9 @@ dinarch_transition(
 convention).}
 
 \item{horizon}{Number of forecast steps - must match the \code{horizon} you
-pass to \code{\link[=dinarch_project]{dinarch_project()}}.}
+pass to \code{\link[=dinarch_project]{dinarch_project()}}; a mismatch makes \code{\link[=dinarch_project]{dinarch_project()}}
+warn: a shorter transition reverts to \code{fit_from}'s parameters after
+its last step, and a longer one is cut off.}
 
 \item{shape, range}{Passed to \code{\link[=dinarch_transition_path]{dinarch_transition_path()}} - one shared
 interpolation shape for every parameter.}

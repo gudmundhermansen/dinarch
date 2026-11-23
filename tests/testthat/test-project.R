@@ -144,6 +144,37 @@ test_that("dinarch_project() warns when new_data/new_para don't match the simula
   )
 })
 
+test_that("dinarch_project() warns when new_data/new_para don't cover the forecast window", {
+  n <- 40
+  dat <- data.frame(y = rpois(n, 4), time = seq_len(n))
+  fit <- dinarch_fit_ml(dat, y = "y", time = "time", n_lags = 1, vcov = FALSE)
+
+  expect_warning(
+    dinarch_project(fit, dat, horizon = 5, new_para = data.frame(time = (n + 1):(n + 3), phi = 5)),
+    "ends before the last forecast period"
+  )
+  expect_warning(
+    dinarch_project(fit, dat, horizon = 5, new_para = data.frame(time = (n + 1):(n + 8), phi = 5)),
+    "rows after the last forecast period"
+  )
+  expect_no_warning(
+    dinarch_project(fit, dat, horizon = 5, new_para = data.frame(time = (n + 1):(n + 5), phi = 5))
+  )
+  expect_no_warning(
+    dinarch_project(fit, dat, new_para = data.frame(time = 10:12, phi = 5))
+  )
+
+  dat$gdp <- rnorm(n)
+  fit_gdp <- dinarch_fit_ml(dat, y = "y", time = "time", formula = ~gdp, n_lags = 1, vcov = FALSE)
+  expect_warning(
+    dinarch_project(fit_gdp, dat, horizon = 5, new_data = data.frame(time = (n + 1):(n + 3), gdp = 1)),
+    "ends before the last forecast period"
+  )
+  expect_no_warning(
+    dinarch_project(fit_gdp, dat, horizon = 5, new_data = data.frame(time = 1:(n + 5), gdp = 1))
+  )
+})
+
 test_that("dinarch_project() Bayesian use_draw = 'random' varies parameters across replicates", {
   testthat::skip_if_not_installed("rstan")
 
