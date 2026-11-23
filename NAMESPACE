@@ -9,22 +9,29 @@ S3method(print,summary.dinarch_project)
 S3method(simulate,dinarch_fit)
 S3method(summary,dinarch_fit)
 S3method(summary,dinarch_project)
+export(as_dinarch_project)
 export(dinarch_fit)
 export(dinarch_fit_bayes)
 export(dinarch_fit_ml)
 export(dinarch_project)
 export(dinarch_simulate)
-export(dinarch_transition_new_para)
+export(dinarch_transition)
 export(dinarch_transition_path)
-importFrom(data.table,":=")
-importFrom(data.table,data.table)
-importFrom(data.table,is.data.table)
-importFrom(data.table,setDT)
-importFrom(data.table,setorder)
-importFrom(data.table,shift)
-importFrom(stats,dnbinom)
-importFrom(stats,optim)
-importFrom(stats,plogis)
-importFrom(stats,qlogis)
-importFrom(stats,rnbinom)
-importFrom(stats,simulate)
+importFrom(data.table,
+  ":=",
+  .N,
+  .SD,
+  data.table,
+  is.data.table,
+  setDT,
+  shift
+)
+importFrom(rlang,.data)
+importFrom(stats,
+  dnbinom,
+  optim,
+  plogis,
+  qlogis,
+  rnbinom,
+  simulate
+)

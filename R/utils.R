@@ -4,11 +4,11 @@
 
 #' Check that required columns are present in a data frame / data.table
 #' @noRd
-.check_columns <- function(data, cols) {
+.check_columns <- function(data, cols, arg_name = "data") {
   missing_cols <- setdiff(cols, names(data))
   if (length(missing_cols) > 0) {
     stop(sprintf(
-      "`data` is missing required column(s): %s.",
+      "`%s` is missing required column(s): %s.", arg_name,
       paste(missing_cols, collapse = ", ")
     ))
   }
@@ -70,7 +70,7 @@
 #' @noRd
 .add_lag_columns <- function(Y, n_lags, by = "id") {
   lag_cols <- paste0("y", seq_len(n_lags))
-  Y[, (lag_cols) := data.table::shift(y, n = seq_len(n_lags)), by = by]
+  Y[, (lag_cols) := data.table::shift(.SD[["y"]], n = seq_len(n_lags)), by = by, .SDcols = "y"]
   Y
 }
 
@@ -247,7 +247,7 @@
     time = data[[time]],
     y    = data[[y]]
   )
-  for (v in cov_vars) Y[, (v) := data[[v]][orig_row]]
+  for (v in cov_vars) data.table::set(Y, j = v, value = data[[v]][Y$orig_row])
 
   data.table::setorderv(Y, c("id", "time"))
   .check_time_regularity(Y, has_id = !is.null(id))
@@ -310,4 +310,27 @@
     Xcov = Xcov,
     n = nrow(Yc)
   )
+}
+
+
+#' Optimal alpha estimation
+#'
+#' Estimate the optimal alpha level per line based on counts of overlapping lines.
+#'
+#' @param dt Panel data used to plot lines
+#' @param group The combination of variables that identify each unique line
+#' @param x The x-axis variable
+#' @param y The y-axis variable
+#' @param c The max alpha target
+.alpha_est <- function(dt, group = c("id", "sim"), x = "time", y = "y", c = 0.95) {
+
+  x_bin <- cut(dt[[x]], breaks = 200, labels = FALSE)
+  y_bin <- cut(dt[[y]], breaks = 200, labels = FALSE)
+
+  overlap_counts <- unique(
+    dt[, group, with = FALSE][, `:=`(x_bin = x_bin, y_bin = y_bin)]
+  )[, .N, by = c("x_bin", "y_bin")]
+
+  m <- stats::quantile(overlap_counts$N, c)
+  1 - (1 - c)^(1/m)
 }

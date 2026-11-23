@@ -56,7 +56,7 @@ dinarch_transition_path <- function(from, to, n,
 #' a table in exactly the shape [dinarch_project()]'s `new_para` expects,
 #' ready to pass straight through, e.g.
 #' `dinarch_project(fit_from, data, horizon = horizon, new_para =
-#' dinarch_transition_new_para(fit_from, fit_to, data, horizon))`. At the
+#' dinarch_transition(fit_from, fit_to, data, horizon))`. At the
 #' last forecast step, the parameters equal `fit_to`'s exactly.
 #'
 #' `fit_from` and `fit_to` must share the same `n_lags` and exactly the
@@ -82,7 +82,9 @@ dinarch_transition_path <- function(from, to, n,
 #'   `data` argument (same validation, same `y`/`time`/`id` column-name
 #'   convention).
 #' @param horizon Number of forecast steps - must match the `horizon` you
-#'   pass to [dinarch_project()].
+#'   pass to [dinarch_project()]; a mismatch makes [dinarch_project()]
+#'   warn: a shorter transition reverts to `fit_from`'s parameters after
+#'   its last step, and a longer one is cut off.
 #' @param shape,range Passed to [dinarch_transition_path()] - one shared
 #'   interpolation shape for every parameter.
 #' @param y,time,id Column names (strings) in `data` - see
@@ -101,11 +103,11 @@ dinarch_transition_path <- function(from, to, n,
 #'   data.frame(y = sim_b$y, time = seq_len(100)), y = "y", time = "time",
 #'   n_lags = 1, vcov = FALSE
 #' )
-#' new_para <- dinarch_transition_new_para(fit_a, fit_b, dat_a, horizon = 20)
+#' new_para <- dinarch_transition(fit_a, fit_b, dat_a, horizon = 20)
 #' proj <- dinarch_project(fit_a, dat_a, horizon = 20, nsim = 100, new_para = new_para)
 #'
 #' @export
-dinarch_transition_new_para <- function(fit_from, fit_to, data, horizon,
+dinarch_transition <- function(fit_from, fit_to, data, horizon,
                                          shape = c("sigmoid", "linear"),
                                          range = c(-3, 9),
                                          y = "y", time = "time", id = NULL) {
