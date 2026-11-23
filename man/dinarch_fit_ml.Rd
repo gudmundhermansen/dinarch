@@ -150,7 +150,7 @@ underflow (\code{mu} or \code{phi} rounding to exactly 0).
 Standard errors (\code{vcov = TRUE}, the default) are computed by
 numerically differentiating the negative log-likelihood twice at the
 optimum, on the internal unconstrained scale the optimizer actually
-used (\code{\link[stats:optim]{stats::optimHess()}}), inverting that Hessian, and then
+used (\code{\link[stats:optimHess]{stats::optimHess()}}), inverting that Hessian, and then
 delta-method-transforming the result to the natural \verb{(b, phi, beta)}
 scale reported in \code{coefficients} (via a numerical Jacobian of the
 \verb{par -> (b, phi, beta)} mapping). This is the standard asymptotic

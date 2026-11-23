@@ -47,5 +47,10 @@ Useful links:
 \author{
 \strong{Maintainer}: Gudmund Hermansen \email{gudmund.hermansen@gmail.com} (\href{https://orcid.org/0009-0001-7256-867X}{ORCID})
 
+Authors:
+\itemize{
+  \item Gudmund Hermansen \email{gudmund.hermansen@gmail.com} (\href{https://orcid.org/0009-0001-7256-867X}{ORCID})
+}
+
 }
 \keyword{internal}

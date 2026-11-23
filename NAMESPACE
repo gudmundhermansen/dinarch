@@ -16,15 +16,19 @@ export(dinarch_project)
 export(dinarch_simulate)
 export(dinarch_transition_new_para)
 export(dinarch_transition_path)
-importFrom(data.table,":=")
-importFrom(data.table,data.table)
-importFrom(data.table,is.data.table)
-importFrom(data.table,setDT)
-importFrom(data.table,setorder)
-importFrom(data.table,shift)
-importFrom(stats,dnbinom)
-importFrom(stats,optim)
-importFrom(stats,plogis)
-importFrom(stats,qlogis)
-importFrom(stats,rnbinom)
-importFrom(stats,simulate)
+importFrom(data.table,
+  ":=",
+  data.table,
+  is.data.table,
+  setDT,
+  setorder,
+  shift
+)
+importFrom(stats,
+  dnbinom,
+  optim,
+  plogis,
+  qlogis,
+  rnbinom,
+  simulate
+)
