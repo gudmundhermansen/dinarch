@@ -322,24 +322,27 @@ dinarch_project <- function(object, data,
 #'
 #' @return A `ggplot` object.
 #' @export
-plot.dinarch_project <- function(x, type = c("ribbon", "spaghetti"), probs = c(0.1, 0.9),
+plot.dinarch_project <- function(object, type = c("ribbon", "spaghetti"), probs = c(0.1, 0.9),
                                   step = FALSE, ...) {
   if (!requireNamespace("ggplot2", quietly = TRUE)) {
     stop("Package 'ggplot2' is required for plot.dinarch_project() but is not installed.")
   }
+
+  stopifnot("dinarch_project" %in% class(object))
+
   type <- match.arg(type)
   stopifnot(length(probs) == 2, probs[1] < probs[2])
   stopifnot(is.logical(step), length(step) == 1, !is.na(step))
 
   line_geom <- if (step) ggplot2::geom_step else ggplot2::geom_line
 
-  multi_id <- length(unique(x$id)) > 1
+  multi_id <- length(unique(object$id)) > 1
 
   # historical rows are identical across every `sim` replicate - dedupe to
   # the single historical line rather than drawing nsim overlapping copies.
-  history <- unique(x[x$pred == FALSE, c("id", "time", "y"), with = FALSE])
+  history <- unique(object[object$pred == FALSE, c("id", "time", "y"), with = FALSE])
   data.table::setorderv(history, c("id", "time"))
-  proj <- x[x$pred == TRUE]
+  proj <- object[object$pred == TRUE]
 
   # Last historical point strictly before each id's first projected
   # time - prepended below so the projection connects to, rather than
