@@ -115,9 +115,14 @@ per-period parameter overrides) - see below.
 ## Scenario: transitioning between two fits
 
 Suppose a second fit represents a different regime - `dinarch_transition()`
-builds a `new_para` table that smoothly interpolates every parameter from
-one fit to another over the forecast horizon, for scenarios like "assume
-the dynamics gradually shift from `fit`'s regime to `fit_b`'s":
+builds a `new_para` table that moves the model from one fit to another
+over the forecast horizon, for scenarios like "assume the dynamics
+gradually shift from `fit`'s regime to `fit_b`'s". Rather than
+interpolating each raw coefficient separately, it interpolates
+interpretable quantities - persistence `sum(b)`, the lag shares, the
+covariate slopes, `1/phi`, and the log long-run mean at each id's last
+observed covariate values - and solves the intercept to match, so e.g.
+the long-run mean doesn't dip mid-path between two equal-mean regimes:
 
 ```{r, fig.width = 6, fig.height = 4}
 sim_b <- dinarch_simulate(
@@ -134,9 +139,14 @@ scenario <- dinarch_project(fit, dat, horizon = h, nsim = 500, new_para = new_pa
 plot(scenario)
 ```
 
-By the last forecast period, the simulated dynamics match `fit_b`'s
-parameters exactly. `fit` and `fit_b` must share `n_lags` and the same
-`beta` coefficient names (i.e. the same `formula`).
+With `shape = "linear"`, the last forecast period matches `fit_b`'s
+parameters exactly; the default sigmoid gets to within weight
+`plogis(9)` (about 0.99988) of them. `fit` and `fit_b` must share
+`n_lags` and the same `beta` coefficient names (i.e. the same `formula`,
+which must include an intercept). For Bayesian fits, `nsim` (with the
+same value passed to `dinarch_project()`) builds one transition per
+replicate from independent posterior draws, propagating parameter
+uncertainty into the scenario.
 
 ## Multiple series: unpooled fits, combined for plotting
 

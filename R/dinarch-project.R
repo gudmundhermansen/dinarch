@@ -65,7 +65,10 @@
 #'   code, just something to keep straight when naming columns. With
 #'   `horizon` set, a warning is issued if `new_para` ends before the last
 #'   forecast period (later periods revert to the fitted parameters) or has
-#'   rows after it (ignored).
+#'   rows after it (ignored). An optional `sim` column restricts each row
+#'   to that replicate (as produced by `dinarch_transition(nsim = ...)`)
+#'   and must cover exactly `1:nsim`; where such a table overrides every
+#'   parameter, `use_draw` has no effect on those periods.
 #' @param use_draw For Bayesian fits only: `NULL` (default) uses the
 #'   posterior mean for every replicate; `"random"` samples a fresh
 #'   posterior draw per replicate, propagating full parameter uncertainty
@@ -155,6 +158,16 @@ dinarch_project <- function(object, data,
 
   new_data <- if (!is.null(new_data)) data.table::as.data.table(new_data) else NULL
   new_para <- if (!is.null(new_para)) data.table::as.data.table(new_para) else NULL
+  if (!is.null(new_para) && "sim" %in% names(new_para)) {
+    sims <- new_para$sim
+    if (!is.numeric(sims) || any(sims != round(sims)) ||
+        !setequal(unique(sims), seq_len(nsim))) {
+      stop(sprintf(
+        "`new_para$sim` must contain exactly the replicate indices 1..nsim (nsim = %d) - pass the same `nsim` to dinarch_transition() and dinarch_project().",
+        as.integer(nsim)
+      ))
+    }
+  }
   b_cols <- paste0("b", seq_len(n_lags))
   beta_names <- names(object$coefficients$beta)
   n_beta <- length(beta_names)
@@ -277,6 +290,11 @@ dinarch_project <- function(object, data,
       if (!is.null(sc$np_match)) {
         pos <- sc$np_match$pos
         np_data <- sc$np_match$data
+        if ("sim" %in% names(np_data)) {
+          keep <- np_data$sim == s
+          pos <- pos[keep]
+          np_data <- np_data[keep]
+        }
         if ("phi" %in% names(np_data)) phi_path[pos] <- np_data$phi
         for (col in intersect(b_cols, names(np_data))) {
           j <- as.integer(sub("^b", "", col))

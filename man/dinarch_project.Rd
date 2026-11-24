@@ -77,7 +77,10 @@ column - the two tables are separate, so there's no ambiguity in
 code, just something to keep straight when naming columns. With
 \code{horizon} set, a warning is issued if \code{new_para} ends before the last
 forecast period (later periods revert to the fitted parameters) or has
-rows after it (ignored).}
+rows after it (ignored). An optional \code{sim} column restricts each row
+to that replicate (as produced by \code{dinarch_transition(nsim = ...)})
+and must cover exactly \code{1:nsim}; where such a table overrides every
+parameter, \code{use_draw} has no effect on those periods.}
 
 \item{use_draw}{For Bayesian fits only: \code{NULL} (default) uses the
 posterior mean for every replicate; \code{"random"} samples a fresh

@@ -11,6 +11,8 @@ dinarch_transition(
   horizon,
   shape = c("sigmoid", "linear"),
   range = c(-3, 9),
+  nsim = NULL,
+  seed = NULL,
   y = "y",
   time = "time",
   id = NULL
@@ -21,7 +23,8 @@ dinarch_transition(
 
 \item{data}{\code{fit_from}'s historical data - see \code{\link[=dinarch_project]{dinarch_project()}}'s
 \code{data} argument (same validation, same \code{y}/\code{time}/\code{id} column-name
-convention).}
+convention). Must contain every variable the fits' \code{formula}
+references.}
 
 \item{horizon}{Number of forecast steps - must match the \code{horizon} you
 pass to \code{\link[=dinarch_project]{dinarch_project()}}; a mismatch makes \code{\link[=dinarch_project]{dinarch_project()}}
@@ -29,26 +32,56 @@ warn: a shorter transition reverts to \code{fit_from}'s parameters after
 its last step, and a longer one is cut off.}
 
 \item{shape, range}{Passed to \code{\link[=dinarch_transition_path]{dinarch_transition_path()}} - one shared
-interpolation shape for every parameter.}
+interpolation weight path for every target quantity.}
+
+\item{nsim}{\code{NULL} (default) builds one transition from both fits'
+point estimates. A whole number \verb{>= 1} builds one transition per
+replicate from independent posterior draws (requires at least one
+Bayesian fit) and adds a \code{sim} column - see Details.}
+
+\item{seed}{Optional random seed, set once before any posterior draws.}
 
 \item{y, time, id}{Column names (strings) in \code{data} - see
 \code{\link[=dinarch_project]{dinarch_project()}}.}
 }
 \value{
 A \code{data.table} with a \code{time} column (and an \code{id} column if
-\code{data} has more than one id), plus \verb{b1, ..., bk}, \code{phi}, and
-one column per \code{beta} coefficient name.
+\code{data} has more than one id, and a \code{sim} column if \code{nsim} is set),
+plus \verb{b1, ..., bk}, \code{phi}, and one column per \code{beta} coefficient name.
 }
 \description{
-Interpolates every parameter (\verb{b_1, ..., b_k}, \code{phi}, and each \code{beta}
-coefficient) from \code{fit_from}'s fitted values to \code{fit_to}'s, over
-\code{horizon} steps per id, via \code{\link[=dinarch_transition_path]{dinarch_transition_path()}} - producing
-a table in exactly the shape \code{\link[=dinarch_project]{dinarch_project()}}'s \code{new_para} expects,
-ready to pass straight through, e.g.
-\code{dinarch_project(fit_from, data, horizon = horizon, new_para = dinarch_transition(fit_from, fit_to, data, horizon))}. At the
-last forecast step, the parameters equal \code{fit_to}'s exactly.
+Moves the model from \code{fit_from}'s fitted parameters to \code{fit_to}'s over
+\code{horizon} steps per id, producing a table in exactly the shape
+\code{\link[=dinarch_project]{dinarch_project()}}'s \code{new_para} expects, ready to pass straight
+through, e.g. \code{dinarch_project(fit_from, data, horizon = horizon, new_para = dinarch_transition(fit_from, fit_to, data, horizon))}.
 }
 \details{
+Rather than interpolating each raw coefficient on its own (which
+produces artefacts - e.g. the long-run mean \code{exp(eta) / (1 - sum(b))}
+dips mid-path between two regimes with the same mean, and \code{phi} on
+its natural scale is badly behaved when it's huge), every intermediate
+step interpolates a complete set of interpretable target quantities
+with one shared weight path from \code{\link[=dinarch_transition_path]{dinarch_transition_path()}} (\code{0} to
+\code{1}), then solves back to parameters:
+\itemize{
+\item persistence \code{sum(b)}: linear;
+\item lag shares \code{b_j / sum(b)}: linear (an endpoint with \code{sum(b) = 0}
+borrows the other endpoint's shares);
+\item slopes (every \code{beta} except \code{(Intercept)}): linear;
+\item log long-run mean \code{eta - log(1 - sum(b))}, evaluated at each id's
+last observed covariate row in \code{data}: linear;
+\item \code{1 / phi} (the NB overdispersion): linear;
+\item \code{(Intercept)}: solved so the long-run mean at the reference row
+equals its interpolated value.
+}
+
+Both endpoints reproduce each fit's parameters exactly regardless of
+the reference row - it only affects the intermediate steps. Since the
+intercept is what gets solved for, the fits' \code{formula} must include
+one. With \code{shape = "linear"} the last forecast step equals \code{fit_to}'s
+parameters exactly; the default sigmoid only gets as far as weight
+\code{plogis(range[2])} (about 0.99988 for the default \code{range}).
+
 \code{fit_from} and \code{fit_to} must share the same \code{n_lags} and exactly the
 same set of \code{beta} coefficient names (i.e. the same \code{formula}) - each
 fit has exactly one parameter set (pooled across ids even for
@@ -57,7 +90,8 @@ time, not the parameters themselves), so "transition \code{b[2]} from A to
 B" is only well-defined when A and B's parameter spaces line up
 exactly. \code{fit_to}'s own coefficients are the only thing used from it -
 \code{data} is \code{fit_from}'s historical data only, used to find each id's
-last observed \code{time} to index the forecast window from.
+last observed \code{time} to index the forecast window from, and its last
+observed covariate row (the long-run-mean reference).
 
 Each id's forecast window is indexed exactly as
 \code{\link[=dinarch_project]{dinarch_project()}}'s own \code{horizon} forecasting does - starting at
@@ -65,6 +99,14 @@ that id's own \verb{<last observed time> + 1} - so the same shape of
 transition (steps \code{1:horizon}) lands at different absolute \code{time}
 values across ids with different histories, but the returned table
 still lines up with what \code{dinarch_project(fit_from, data, horizon = horizon, ...)} actually simulates (using the same \code{data}).
+
+With \code{nsim} set, parameter uncertainty is propagated: for each
+replicate \code{1:nsim}, an independent posterior draw is taken from each
+Bayesian fit (an ML fit contributes its point estimate every time) and
+a full transition is built from that pair, shared across all ids. The
+output gains a \code{sim} column; pass the same \code{nsim} to
+\code{\link[=dinarch_project]{dinarch_project()}}, which applies each replicate's rows to that
+replicate only.
 }
 \examples{
 sim_a <- dinarch_simulate(n = 100, b = 0.2, phi = 8, beta = log(3), seed = 1)

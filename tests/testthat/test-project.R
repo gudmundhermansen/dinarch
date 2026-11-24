@@ -91,6 +91,28 @@ test_that("dinarch_project() new_para overrides b/phi only for matching (id, tim
   expect_equal(future$y, rep(round(expected_mu), 3), tolerance = 1)
 })
 
+test_that("dinarch_project() applies sim-keyed new_para rows to their own replicate only", {
+  sim <- dinarch_simulate(n = 50, b = 0.3, phi = 8, beta = log(4), seed = 1)
+  dat <- data.frame(y = sim$y, time = seq_len(50))
+  fit <- dinarch_fit_ml(dat, y = "y", time = "time", n_lags = 1, vcov = FALSE)
+
+  np <- data.frame(
+    check.names = FALSE,
+    time = rep(51:53, 2), sim = rep(1:2, each = 3), b1 = 0, phi = 1e6,
+    "(Intercept)" = rep(c(-50, log(1000)), each = 3)
+  )
+  proj <- dinarch_project(fit, dat, horizon = 3, nsim = 2, new_para = np, seed = 1)
+  future <- proj[proj$pred]
+  expect_true(all(future$y[future$sim == 1] == 0))
+  expect_true(all(future$y[future$sim == 2] > 0))
+
+  np_bad <- np[np$sim %in% 1:2, ]
+  expect_error(
+    dinarch_project(fit, dat, horizon = 3, nsim = 3, new_para = np_bad, seed = 1),
+    "new_para\\$sim"
+  )
+})
+
 test_that("dinarch_project() nsim replicates vary stochastically", {
   n <- 50
   dat <- data.frame(y = rpois(n, 5), time = seq_len(n))

@@ -109,3 +109,83 @@ test_that("dinarch_transition errors on mismatched n_lags or beta names", {
   )
   expect_error(dinarch_transition(fit_1lag, fit_gdp, dat, horizon = 5), "beta")
 })
+
+.fake_fit <- function(b, phi, beta, formula = ~1, method = "ml", posterior = NULL) {
+  structure(
+    list(method = method, coefficients = list(b = b, phi = phi, beta = beta),
+         n_lags = length(b), formula = formula, posterior = posterior),
+    class = "dinarch_fit"
+  )
+}
+
+test_that("dinarch_transition holds the long-run mean constant between equal-mean regimes", {
+  fit_a <- .fake_fit(b = 0.8, phi = 10, beta = c("(Intercept)" = 0))
+  fit_b <- .fake_fit(b = 0, phi = 10, beta = c("(Intercept)" = log(5)))
+  set.seed(1)
+  dat <- data.frame(y = rpois(30, 5), time = 1:30)
+  np <- dinarch_transition(fit_a, fit_b, dat, horizon = 11, shape = "linear")
+  expect_equal(exp(np[["(Intercept)"]]) / (1 - np$b1), rep(5, 11))
+  expect_equal(np$b1, seq(0.8, 0, length.out = 11))
+})
+
+test_that("dinarch_transition reproduces endpoints and interpolates sum(b) and 1/phi linearly", {
+  fit_a <- .fake_fit(b = c(0.5, 0.2), phi = 2, beta = c("(Intercept)" = 0.3))
+  fit_b <- .fake_fit(b = c(0.1, 0.3), phi = 200, beta = c("(Intercept)" = 1.2))
+  dat <- data.frame(y = rpois(30, 5), time = 1:30)
+  np <- dinarch_transition(fit_a, fit_b, dat, horizon = 9, shape = "linear")
+  cols <- c("b1", "b2", "phi", "(Intercept)")
+  expect_equal(unlist(np[1, cols, with = FALSE], use.names = FALSE), c(0.5, 0.2, 2, 0.3))
+  expect_equal(unlist(np[9, cols, with = FALSE], use.names = FALSE), c(0.1, 0.3, 200, 1.2))
+  expect_equal(diff(1 / np$phi), rep(diff(1 / np$phi)[1], 8))
+  expect_equal(np$b1 + np$b2, seq(0.7, 0.4, length.out = 9))
+})
+
+test_that("dinarch_transition interpolates the long-run mean at each id's last covariate row", {
+  fit_a <- .fake_fit(b = 0.4, phi = 5, beta = c("(Intercept)" = 0.5, x = 0.3), formula = ~x)
+  fit_b <- .fake_fit(b = 0.1, phi = 5, beta = c("(Intercept)" = 1, x = -0.2), formula = ~x)
+  dat <- rbind(
+    data.frame(y = rpois(20, 3), time = 1:20, id = "A", x = c(rnorm(19), 0)),
+    data.frame(y = rpois(15, 3), time = 1:15, id = "B", x = c(rnorm(14), 10))
+  )
+  h <- 7
+  np <- dinarch_transition(fit_a, fit_b, dat, horizon = h, shape = "linear", id = "id")
+  for (g in c("A", "B")) {
+    x_g <- if (g == "A") 0 else 10
+    r <- np[np$id == g]
+    lm_t <- r[["(Intercept)"]] + x_g * r$x - log(1 - r$b1)
+    lm_A <- 0.5 + x_g * 0.3 - log(1 - 0.4)
+    lm_B <- 1 + x_g * -0.2 - log(1 - 0.1)
+    expect_equal(lm_t, seq(lm_A, lm_B, length.out = h))
+    expect_equal(r$x, seq(0.3, -0.2, length.out = h))
+  }
+})
+
+test_that("dinarch_transition errors without an intercept or with nsim on ML fits", {
+  dat <- data.frame(y = rpois(20, 3), time = 1:20, x = rnorm(20))
+  f0 <- .fake_fit(b = 0.3, phi = 5, beta = c(x = 0.2), formula = ~0 + x)
+  expect_error(dinarch_transition(f0, f0, dat, horizon = 3), "Intercept")
+
+  f1 <- .fake_fit(b = 0.3, phi = 5, beta = c("(Intercept)" = 1))
+  expect_error(dinarch_transition(f1, f1, dat, horizon = 3, nsim = 3), "Bayesian")
+})
+
+test_that("dinarch_transition with nsim builds one transition per posterior draw", {
+  fit_from <- .fake_fit(
+    b = 0.35, phi = 27.5, beta = c("(Intercept)" = 0.5), method = "bayes",
+    posterior = list(
+      b = matrix(c(0.1, 0.6), 2, 1), phi = c(5, 50),
+      beta = matrix(c(0, 1), 2, 1, dimnames = list(NULL, "(Intercept)"))
+    )
+  )
+  fit_to <- .fake_fit(b = 0.2, phi = 10, beta = c("(Intercept)" = 1))
+  dat <- data.frame(y = rpois(30, 3), time = 1:30)
+  np <- dinarch_transition(fit_from, fit_to, dat, horizon = 4, nsim = 20, seed = 1, shape = "linear")
+  expect_identical(names(np), c("time", "sim", "b1", "phi", "(Intercept)"))
+  expect_equal(sort(unique(np$sim)), 1:20)
+  expect_setequal(np$b1[np$time == 31], c(0.1, 0.6))
+  expect_equal(np$b1[np$time == 34], rep(0.2, 20))
+  expect_identical(
+    np,
+    dinarch_transition(fit_from, fit_to, dat, horizon = 4, nsim = 20, seed = 1, shape = "linear")
+  )
+})
