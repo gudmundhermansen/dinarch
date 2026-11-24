@@ -3,7 +3,7 @@
 .dinarch_stan_code <- "
 data {
   int<lower=1> N;
-  int<lower=0> y[N];
+  array[N] int<lower=0> y;
   int<lower=1> n_lags;
   matrix[N, n_lags] ylags;
   int<lower=0> p;

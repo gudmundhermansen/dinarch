@@ -77,11 +77,11 @@ is divided by the same factor, so \code{mean = 0}, the default, stays 0).
 The intercept column is constant, so it has no scale to adapt to and
 keeps \code{c(mean, sd)} unscaled.}
 
-\item{iter, chains}{Passed to \code{\link[rstan:stanmodel-method-sampling]{rstan::sampling()}}.}
+\item{iter, chains}{Passed to \code{\link[rstan:sampling]{rstan::sampling()}}.}
 
-\item{seed}{Optional random seed, passed to \code{\link[rstan:stanmodel-method-sampling]{rstan::sampling()}}.}
+\item{seed}{Optional random seed, passed to \code{\link[rstan:sampling]{rstan::sampling()}}.}
 
-\item{...}{Further arguments passed to \code{\link[rstan:stanmodel-method-sampling]{rstan::sampling()}} - e.g. a
+\item{...}{Further arguments passed to \code{\link[rstan:sampling]{rstan::sampling()}} - e.g. a
 custom \code{init} to override the default described in Details.}
 }
 \value{
@@ -91,7 +91,7 @@ with \code{method = "bayes"}, plus \code{stanfit} (the raw \code{stanfit} object
 }
 \description{
 Same model as \code{\link[=dinarch_fit_ml]{dinarch_fit_ml()}}, estimated via Hamiltonian Monte Carlo
-with \code{\link[rstan:stanmodel-method-sampling]{rstan::sampling()}}. Requires the (Suggested) \code{rstan} package.
+with \code{\link[rstan:sampling]{rstan::sampling()}}. Requires the (Suggested) \code{rstan} package.
 }
 \details{
 \strong{Covariate scale matters more here than for \code{\link[=dinarch_fit_ml]{dinarch_fit_ml()}}.}

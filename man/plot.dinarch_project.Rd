@@ -34,7 +34,7 @@ A \code{ggplot} object.
 }
 \description{
 A minimal \code{ggplot2} plot of a \code{\link[=dinarch_project]{dinarch_project()}} result: the historical
-\code{y} (\code{x$historical == TRUE}, deduplicated across replicates) as a single
+\code{y} (\code{x$pred == FALSE}, deduplicated across replicates) as a single
 line, plus either every simulated replicate as its own thin line
 (\code{type = "spaghetti"}) or a shaded quantile ribbon with a median line
 (\code{type = "ribbon"}, the default) summarizing the replicates at each

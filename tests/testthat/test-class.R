@@ -90,18 +90,18 @@ test_that("simulate.dinarch_fit's use_draw runs using a specific posterior draw"
 # predict.dinarch_fit ----------------------------------------------------
 
 test_that("predict.dinarch_fit forecasts horizon periods with nsim draws each, classed dinarch_project", {
-  pred <- predict(.test_ml_fit, .test_ml_data, horizon = 5, nsim = 20, seed = 1)
-  expect_s3_class(pred, "dinarch_project")
-  expect_s3_class(pred, "data.table")
-  expect_equal(nrow(pred), (200 + 5) * 20)
-  future <- pred[!pred$historical]
+  proj <- predict(.test_ml_fit, .test_ml_data, horizon = 5, nsim = 20, seed = 1)
+  expect_s3_class(proj, "dinarch_project")
+  expect_s3_class(proj, "data.table")
+  expect_equal(nrow(proj), (200 + 5) * 20)
+  future <- proj[proj$pred]
   expect_equal(nrow(future), 5 * 20)
   expect_equal(sort(unique(future$time)), 201:205)
 })
 
 test_that("predict.dinarch_fit defaults to nsim = 1000 and horizon = NULL (in-sample)", {
   pred_default <- predict(.test_ml_fit, .test_ml_data, horizon = 3)
-  expect_equal(nrow(pred_default[!pred_default$historical]), 3 * 1000)
+  expect_equal(nrow(pred_default[pred_default$pred]), 3 * 1000)
 
   pred_insample <- predict(.test_ml_fit, .test_ml_data, nsim = 10, seed = 1)
   expect_true(all(pred_insample$time <= 200))
@@ -111,12 +111,12 @@ test_that("predict.dinarch_fit's use_draw errors for ML fits and works for Bayes
   expect_error(predict(.test_ml_fit, .test_ml_data, horizon = 3, use_draw = "random"), "Bayesian")
 
   skip_if_not_installed("rstan")
-  pred <- predict(.test_bayes_fit, .test_bayes_data, horizon = 3, nsim = 10, use_draw = "random", seed = 2)
-  expect_equal(nrow(pred[!pred$historical]), 3 * 10)
+  proj <- predict(.test_bayes_fit, .test_bayes_data, horizon = 3, nsim = 10, use_draw = "random", seed = 2)
+  expect_equal(nrow(proj[proj$pred]), 3 * 10)
 })
 
 test_that("predict.dinarch_fit forwards scenario arguments (new_para, y_threshold) via ...", {
   new_para <- data.frame(time = 201:203, b1 = 0.05)
-  pred <- predict(.test_ml_fit, .test_ml_data, horizon = 3, nsim = 5, new_para = new_para, seed = 1)
-  expect_equal(nrow(pred[!pred$historical]), 3 * 5)
+  proj <- predict(.test_ml_fit, .test_ml_data, horizon = 3, nsim = 5, new_para = new_para, seed = 1)
+  expect_equal(nrow(proj[proj$pred]), 3 * 5)
 })

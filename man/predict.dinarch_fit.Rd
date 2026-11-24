@@ -49,7 +49,7 @@ A \code{data.table} (also classed \code{"dinarch_project"}, so \code{\link[=plot
 and \code{\link[=summary.dinarch_project]{summary.dinarch_project()}} both work on it directly), one row
 per \verb{(id, time, sim)} observation - both \code{data}'s historical rows
 (repeated per \code{sim}) and the predictive draws, see
-\code{\link[=dinarch_project]{dinarch_project()}}'s \code{historical} column.
+\code{\link[=dinarch_project]{dinarch_project()}}'s \code{pred} column.
 }
 \description{
 Draws \code{nsim} samples from the model's predictive distribution via
@@ -64,7 +64,7 @@ table, or pass it to \code{\link[=plot]{plot()}} directly.
 }
 \details{
 \code{\link[=dinarch_project]{dinarch_project()}}'s \code{new_para} (per-period \code{b}/\code{phi}/\code{beta}
-overrides, e.g. from \code{\link[=dinarch_transition_new_para]{dinarch_transition_new_para()}} or
+overrides, e.g. from \code{\link[=dinarch_transition]{dinarch_transition()}} or
 \code{\link[=dinarch_transition_path]{dinarch_transition_path()}}) and \code{y_threshold} (a rolling-window
 escalation cap) both describe \emph{scenario} constructions
 rather than draws from the fitted model's own predictive distribution,

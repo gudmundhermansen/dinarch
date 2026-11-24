@@ -4,27 +4,42 @@
 \alias{summary.dinarch_project}
 \title{Summarize a DINARCH projection/prediction}
 \usage{
-\method{summary}{dinarch_project}(object, level = 0.95, ...)
+\method{summary}{dinarch_project}(
+  object,
+  probs = c(0.025, 0.5, 0.975),
+  nsplit = 1,
+  include_hist = TRUE,
+  ...
+)
 }
 \arguments{
 \item{object}{A \code{"dinarch_project"} object.}
 
-\item{level}{Prediction interval level (default 0.95, i.e. the
-simulated draws' 2.5th/97.5th percentiles at each period).}
+\item{probs}{Quantiles of \code{y} to report (default \code{c(0.025, 0.5, 0.975)}),
+returned as columns \code{q2.5}, \code{q50}, \code{q97.5}, etc.}
+
+\item{nsplit}{Number of consecutive blocks each id's simulated window is
+split into (default 1: the whole window; capped at the number of
+simulated periods). History is always one block per id. \code{NULL} gives one
+row per period, for history and simulated rows alike.}
+
+\item{include_hist}{Whether to include rows summarizing the historical
+(\code{pred == FALSE}) data.}
 
 \item{...}{Unused.}
 }
 \value{
-An object of class \code{"summary.dinarch_project"}, printing as a
-table with columns \code{id}, \code{time}, \code{mean}, \code{lower}, \code{upper}.
+An object of class \code{"summary.dinarch_project"}: a list whose
+\code{table} element is a \code{data.table} with columns \code{id}, \code{pred}, \code{start},
+\code{end} (inclusive first/last \code{time} of the block), \code{mean}, and one
+\verb{q<percent>} column per \code{probs} entry, sorted by \code{id}, \code{pred}, \code{start}.
 }
 \description{
-Collapses a \code{\link[=dinarch_project]{dinarch_project()}}/\code{\link[=predict.dinarch_fit]{predict.dinarch_fit()}} result's \code{nsim}
-simulated/projected replicates (\code{historical == FALSE}; historical rows
-are real data, not a distribution, so they're excluded here) at each
-\verb{(id, time)} into a mean and a simulation-based prediction interval - a
-compact numeric alternative to \code{\link[=plot]{plot()}}. \code{time} carries its usual
-meaning: for an out-of-sample call (\code{horizon} set), it's periods ahead
-of the last observed period; for an in-sample call, it's the historical
-period being replayed.
+Collapses a \code{\link[=dinarch_project]{dinarch_project()}}/\code{\link[=predict.dinarch_fit]{predict.dinarch_fit()}} result into the
+mean and simulation quantiles of \code{y} over blocks of consecutive periods -
+a compact numeric alternative to \code{\link[=plot]{plot()}}. Simulated rows (\code{pred == TRUE})
+pool all \code{nsim} replicates within each block; historical rows
+(\code{pred == FALSE}, real data repeated once per replicate) summarize the
+observed series itself. Blocks are formed separately for each id, so ids
+with different time ranges are split independently.
 }

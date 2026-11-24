@@ -44,6 +44,9 @@
 #'   historical value (in-sample - lets you re-simulate history under an
 #'   alternative covariate path, e.g. for counterfactual checks; `time` is
 #'   *not* required to be after the last observed value for this reason).
+#'   With `horizon` set, a warning is issued if `new_data` ends before the
+#'   last forecast period (later periods revert to the last observed
+#'   covariate values) or has rows after it (ignored).
 #' @param new_para Optional `data.frame`/`data.table`, same `(id,
 #'   time)` shape as `new_data`, with columns `phi`, `b1, ..., bk`
 #'   (`k = object$n_lags`, always `b1` even at `n_lags = 1` - never bare
@@ -59,7 +62,13 @@
 #'   as a raw covariate (e.g. `"gdp"`) means "override `gdp`'s
 #'   *coefficient*" here, vs. "override `gdp`'s *value*" as a `new_data`
 #'   column - the two tables are separate, so there's no ambiguity in
-#'   code, just something to keep straight when naming columns.
+#'   code, just something to keep straight when naming columns. With
+#'   `horizon` set, a warning is issued if `new_para` ends before the last
+#'   forecast period (later periods revert to the fitted parameters) or has
+#'   rows after it (ignored). An optional `sim` column restricts each row
+#'   to that replicate (as produced by `dinarch_transition(nsim = ...)`)
+#'   and must cover exactly `1:nsim`; where such a table overrides every
+#'   parameter, `use_draw` has no effect on those periods.
 #' @param use_draw For Bayesian fits only: `NULL` (default) uses the
 #'   posterior mean for every replicate; `"random"` samples a fresh
 #'   posterior draw per replicate, propagating full parameter uncertainty
@@ -81,8 +90,8 @@
 #'   [plot.dinarch_project()] works, but otherwise behaves exactly like an
 #'   ordinary `data.table` - nothing about the usual `data.table` syntax
 #'   changes) with columns `id`, `time`, `sim` (replicate id, `1:nsim`),
-#'   `historical` (`TRUE` for `data`'s real observations, `FALSE` for
-#'   simulated/projected draws), `y`, and the raw covariate columns
+#'   `pred` (`TRUE` for simulated/projected draws, `FALSE` for `data`'s
+#'   real observations), `y`, and the raw covariate columns
 #'   `object$formula` references (whatever values were actually used, so
 #'   the output is self-documenting even when mixing defaults with
 #'   `new_data` overrides). `data`'s historical rows are repeated once per
@@ -149,12 +158,23 @@ dinarch_project <- function(object, data,
 
   new_data <- if (!is.null(new_data)) data.table::as.data.table(new_data) else NULL
   new_para <- if (!is.null(new_para)) data.table::as.data.table(new_para) else NULL
+  if (!is.null(new_para) && "sim" %in% names(new_para)) {
+    sims <- new_para$sim
+    if (!is.numeric(sims) || any(sims != round(sims)) ||
+        !setequal(unique(sims), seq_len(nsim))) {
+      stop(sprintf(
+        "`new_para$sim` must contain exactly the replicate indices 1..nsim (nsim = %d) - pass the same `nsim` to dinarch_transition() and dinarch_project().",
+        as.integer(nsim)
+      ))
+    }
+  }
   b_cols <- paste0("b", seq_len(n_lags))
   beta_names <- names(object$coefficients$beta)
   n_beta <- length(beta_names)
 
   any_data_matched <- is.null(new_data)
   any_para_matched <- is.null(new_para)
+  data_short_ids <- data_long_ids <- para_short_ids <- para_long_ids <- NULL
 
   # --- per-id scaffolding: y_init, time sequence, default (+ new_data-
   # overridden) covariates, matched new_para overrides, and the full
@@ -193,6 +213,10 @@ dinarch_project <- function(object, data,
           cov_df[pos[matched], (col) := nd_g[[col]][matched]]
         }
       }
+      if (!is_insample) {
+        if (any(matched) && max(pos[matched]) < horizon) data_short_ids <<- c(data_short_ids, g)
+        if (any(nd_g$time > max(idx_seq))) data_long_ids <<- c(data_long_ids, g)
+      }
     }
 
     np_match <- NULL
@@ -203,6 +227,10 @@ dinarch_project <- function(object, data,
       if (any(matched)) {
         any_para_matched <<- TRUE
         np_match <- list(pos = pos[matched], data = np_g[matched])
+      }
+      if (!is_insample) {
+        if (any(matched) && max(pos[matched]) < horizon) para_short_ids <<- c(para_short_ids, g)
+        if (any(np_g$time > max(idx_seq))) para_long_ids <<- c(para_long_ids, g)
       }
     }
 
@@ -220,9 +248,34 @@ dinarch_project <- function(object, data,
   if (!is.null(new_para) && !any_para_matched) {
     warning("`new_para` did not match any (id, time) pair in the simulated window; using fitted parameters for all periods.")
   }
+  .fmt_ids <- function(g) if (multi_id) sprintf(" (id(s): %s)", paste(g, collapse = ", ")) else ""
+  if (!is.null(new_data) && any_data_matched && length(data_short_ids) > 0) {
+    warning(sprintf(
+      "`new_data` ends before the last forecast period%s; later periods use the last observed covariate values. Check that it covers all `horizon` periods.",
+      .fmt_ids(data_short_ids)
+    ), call. = FALSE)
+  }
+  if (!is.null(new_data) && any_data_matched && length(data_long_ids) > 0) {
+    warning(sprintf(
+      "`new_data` has rows after the last forecast period%s; they are ignored. Check that it covers all `horizon` periods.",
+      .fmt_ids(data_long_ids)
+    ), call. = FALSE)
+  }
+  if (!is.null(new_para) && any_para_matched && length(para_short_ids) > 0) {
+    warning(sprintf(
+      "`new_para` ends before the last forecast period%s; later periods use the fitted parameters. Check that it covers all `horizon` periods (e.g. the same `horizon` passed to dinarch_transition()).",
+      .fmt_ids(para_short_ids)
+    ), call. = FALSE)
+  }
+  if (!is.null(new_para) && any_para_matched && length(para_long_ids) > 0) {
+    warning(sprintf(
+      "`new_para` has rows after the last forecast period%s; they are ignored. Check that it covers all `horizon` periods (e.g. the same `horizon` passed to dinarch_transition()).",
+      .fmt_ids(para_long_ids)
+    ), call. = FALSE)
+  }
 
   # --- simulate: nsim replicates x ids, each prepended with the full
-  # historical block for that id (marked historical = TRUE) so every
+  # historical block for that id (marked pred = FALSE) so every
   # `sim`'s rows form one complete, continuously-indexed series. -----------
   replicate_results <- vector("list", nsim)
   for (s in seq_len(nsim)) {
@@ -237,6 +290,11 @@ dinarch_project <- function(object, data,
       if (!is.null(sc$np_match)) {
         pos <- sc$np_match$pos
         np_data <- sc$np_match$data
+        if ("sim" %in% names(np_data)) {
+          keep <- np_data$sim == s
+          pos <- pos[keep]
+          np_data <- np_data[keep]
+        }
         if ("phi" %in% names(np_data)) phi_path[pos] <- np_data$phi
         for (col in intersect(b_cols, names(np_data))) {
           j <- as.integer(sub("^b", "", col))
@@ -259,10 +317,10 @@ dinarch_project <- function(object, data,
       sim$time <- sc$idx_seq
       sim$id <- sc$id
       if (length(cov_vars) > 0) sim <- cbind(sim, sc$cov_df)
-      sim$historical <- FALSE
+      sim$pred <- TRUE
 
       hist_block <- data.table::copy(sc$hist)
-      hist_block[, "historical" := TRUE]
+      hist_block[, "pred" := FALSE]
 
       data.table::rbindlist(list(hist_block, sim), use.names = TRUE)
     })
@@ -273,9 +331,86 @@ dinarch_project <- function(object, data,
   }
 
   out <- data.table::rbindlist(replicate_results)
-  data.table::setcolorder(out, c("id", "time", "sim", "historical", "y"))
-  data.table::setattr(out, "class", c("dinarch_project", class(out)))
+  data.table::setcolorder(out, c("id", "time", "sim", "pred", "y"))
+  out <- .new_dinarch_project(out)
   out[]
+}
+
+#' Attach the "dinarch_project" class to a data.table (no validation;
+#' idempotent - the class is never duplicated)
+#' @noRd
+.new_dinarch_project <- function(x) {
+  data.table::setattr(x, "class", c("dinarch_project", setdiff(class(x), "dinarch_project")))
+  x
+}
+
+#' Coerce to a DINARCH projection
+#'
+#' Validates that `x` has the shape [dinarch_project()]'s output has, and
+#' returns it classed `"dinarch_project"` so `plot()`/`summary()` dispatch
+#' on it. The main use is combining per-series projections (each from its
+#' own fit and data) into one table: a plain `rbind()`/
+#' `data.table::rbindlist()` drops the `"dinarch_project"` class, while
+#' `as_dinarch_project()` takes the list directly, row-binds it
+#' (`data.table::rbindlist(use.names = TRUE, fill = TRUE)` - columns are
+#' matched by name, and a covariate present in only some projections is
+#' filled with `NA` elsewhere), and reattaches the class.
+#'
+#' Checks that the result has columns `id`, `time`, `sim`, `pred`
+#' and `y`, none containing missing values; that `pred` is logical,
+#' `sim` whole numbers, and `y` non-negative integers; and that no
+#' `(id, time, sim)` combination appears twice - which is what happens when
+#' two combined projections share an `id` label (e.g. both left at the
+#' single-id default `0`), and would otherwise silently merge the two
+#' series in `plot()`/`summary()`. The input is never modified in place;
+#' a copy is returned.
+#'
+#' @param x A `data.frame`/`data.table` shaped like [dinarch_project()]'s
+#'   output, or a list of them.
+#' @return A `data.table`, also classed `"dinarch_project"`.
+#' @seealso [dinarch_project()]
+#' @examples
+#' sims <- lapply(1:2, function(i) {
+#'   dinarch_simulate(n = 40, b = 0.3, phi = 8, beta = log(4), seed = i)
+#' })
+#' dats <- lapply(seq_along(sims), function(i) {
+#'   data.frame(y = sims[[i]]$y, time = sims[[i]]$time, id = LETTERS[i])
+#' })
+#' projs <- lapply(dats, function(d) {
+#'   fit <- dinarch_fit_ml(d, n_lags = 1, vcov = FALSE)
+#'   dinarch_project(fit, d, id = "id", horizon = 5, nsim = 10, seed = 1)
+#' })
+#' combined <- as_dinarch_project(projs)
+#' summary(combined)
+#' @export
+as_dinarch_project <- function(x) {
+  if (is.data.frame(x)) {
+    x <- data.table::as.data.table(x)
+  } else if (is.list(x) && all(vapply(x, is.data.frame, logical(1)))) {
+    x <- data.table::rbindlist(x, use.names = TRUE, fill = TRUE)
+  } else {
+    stop("`x` must be a data.frame/data.table, or a list of them.")
+  }
+
+  required_cols <- c("id", "time", "sim", "pred", "y")
+  .check_columns(x, required_cols, arg_name = "x")
+  for (col in required_cols) .check_no_na(x[[col]], col)
+
+  if (!is.logical(x$pred)) {
+    stop("`pred` must be logical (TRUE for simulated draws, FALSE for observed rows).")
+  }
+  if (!is.numeric(x$sim) || any(x$sim != round(x$sim))) {
+    stop("`sim` must be whole numbers (replicate ids).")
+  }
+  if (!is.numeric(x$y)) {
+    stop("`y` must be non-negative integers (a count series).")
+  }
+  .check_nonneg_integer(x$y, "y")
+  if (anyDuplicated(x, by = c("id", "time", "sim")) > 0) {
+    stop("`x` has duplicated (id, time, sim) rows - combined projections must each use distinct `id` values.")
+  }
+
+  .new_dinarch_project(x)[]
 }
 
 # Expand one id's sorted (time, lo, hi, med) rows into a step ("post",
@@ -294,7 +429,7 @@ dinarch_project <- function(object, data,
 #' Plot a DINARCH projection
 #'
 #' A minimal `ggplot2` plot of a [dinarch_project()] result: the historical
-#' `y` (`x$historical == TRUE`, deduplicated across replicates) as a single
+#' `y` (`x$pred == FALSE`, deduplicated across replicates) as a single
 #' line, plus either every simulated replicate as its own thin line
 #' (`type = "spaghetti"`) or a shaded quantile ribbon with a median line
 #' (`type = "ribbon"`, the default) summarizing the replicates at each
@@ -327,6 +462,9 @@ plot.dinarch_project <- function(x, type = c("ribbon", "spaghetti"), probs = c(0
   if (!requireNamespace("ggplot2", quietly = TRUE)) {
     stop("Package 'ggplot2' is required for plot.dinarch_project() but is not installed.")
   }
+
+  stopifnot("dinarch_project" %in% class(x))
+
   type <- match.arg(type)
   stopifnot(length(probs) == 2, probs[1] < probs[2])
   stopifnot(is.logical(step), length(step) == 1, !is.na(step))
@@ -337,9 +475,9 @@ plot.dinarch_project <- function(x, type = c("ribbon", "spaghetti"), probs = c(0
 
   # historical rows are identical across every `sim` replicate - dedupe to
   # the single historical line rather than drawing nsim overlapping copies.
-  history <- unique(x[x$historical == TRUE, c("id", "time", "y"), with = FALSE])
+  history <- unique(x[x$pred == FALSE, c("id", "time", "y"), with = FALSE])
   data.table::setorderv(history, c("id", "time"))
-  proj <- x[x$historical == FALSE]
+  proj <- x[x$pred == TRUE]
 
   # Last historical point strictly before each id's first projected
   # time - prepended below so the projection connects to, rather than
@@ -375,18 +513,20 @@ plot.dinarch_project <- function(x, type = c("ribbon", "spaghetti"), probs = c(0
       spaghetti_data <- data.table::rbindlist(list(conn, spaghetti_data), use.names = TRUE)
     }
     data.table::setorderv(spaghetti_data, c("id", "sim", "time"))
+    a <- .alpha_est(spaghetti_data, group = c("id", "sim"), x = "time")
 
     p <- p + line_geom(
       data = spaghetti_data,
       ggplot2::aes(x = .data$time, y = .data$y, group = interaction(.data$id, .data$sim)),
-      colour = "steelblue", alpha = 0.15
+      colour = "steelblue", alpha = a
     )
   } else {
-    agg <- proj[, list(
-      lo  = stats::quantile(y, probs[1]),
-      hi  = stats::quantile(y, probs[2]),
-      med = stats::median(y)
-    ), by = c("id", "time")]
+    ribbon_stats <- function(v) list(
+      lo  = stats::quantile(v, probs[1]),
+      hi  = stats::quantile(v, probs[2]),
+      med = stats::median(v)
+    )
+    agg <- proj[, ribbon_stats(.SD[["y"]]), by = c("id", "time"), .SDcols = "y"]
 
     if (has_connector) {
       conn <- data.table::data.table(
@@ -417,44 +557,101 @@ plot.dinarch_project <- function(x, type = c("ribbon", "spaghetti"), probs = c(0
   p + ggplot2::labs(x = "time", y = "y")
 }
 
+#' Consecutive block index for `n_t` ordered periods split into `nsplit`
+#' near-equal blocks (later blocks get the extra period); `NULL` = one block
+#' per period. `nsplit` is capped at `n_t`.
+#' @noRd
+.dinarch_time_blocks <- function(n_t, nsplit) {
+  if (is.null(nsplit)) return(seq_len(n_t))
+  k <- min(nsplit, n_t)
+  as.integer(ceiling(seq_len(n_t) * k / n_t))
+}
+
 #' Summarize a DINARCH projection/prediction
 #'
-#' Collapses a [dinarch_project()]/[predict.dinarch_fit()] result's `nsim`
-#' simulated/projected replicates (`historical == FALSE`; historical rows
-#' are real data, not a distribution, so they're excluded here) at each
-#' `(id, time)` into a mean and a simulation-based prediction interval - a
-#' compact numeric alternative to [plot()]. `time` carries its usual
-#' meaning: for an out-of-sample call (`horizon` set), it's periods ahead
-#' of the last observed period; for an in-sample call, it's the historical
-#' period being replayed.
+#' Collapses a [dinarch_project()]/[predict.dinarch_fit()] result into the
+#' mean and simulation quantiles of `y` over blocks of consecutive periods -
+#' a compact numeric alternative to [plot()]. Simulated rows (`pred == TRUE`)
+#' pool all `nsim` replicates within each block; historical rows
+#' (`pred == FALSE`, real data repeated once per replicate) summarize the
+#' observed series itself. Blocks are formed separately for each id, so ids
+#' with different time ranges are split independently.
 #'
 #' @param object A `"dinarch_project"` object.
-#' @param level Prediction interval level (default 0.95, i.e. the
-#'   simulated draws' 2.5th/97.5th percentiles at each period).
+#' @param probs Quantiles of `y` to report (default `c(0.025, 0.5, 0.975)`),
+#'   returned as columns `q2.5`, `q50`, `q97.5`, etc.
+#' @param nsplit Number of consecutive blocks each id's simulated window is
+#'   split into (default 1: the whole window; capped at the number of
+#'   simulated periods). History is always one block per id. `NULL` gives one
+#'   row per period, for history and simulated rows alike.
+#' @param include_hist Whether to include rows summarizing the historical
+#'   (`pred == FALSE`) data.
 #' @param ... Unused.
 #'
-#' @return An object of class `"summary.dinarch_project"`, printing as a
-#'   table with columns `id`, `time`, `mean`, `lower`, `upper`.
+#' @return An object of class `"summary.dinarch_project"`: a list whose
+#'   `table` element is a `data.table` with columns `id`, `pred`, `start`,
+#'   `end` (inclusive first/last `time` of the block), `mean`, and one
+#'   `q<percent>` column per `probs` entry, sorted by `id`, `pred`, `start`.
 #' @export
-summary.dinarch_project <- function(object, level = 0.95, ...) {
-  stopifnot(is.numeric(level), length(level) == 1, level > 0, level < 1)
-  alpha <- 1 - level
-  probs <- c(alpha / 2, 1 - alpha / 2)
+summary.dinarch_project <- function(object, probs = c(0.025, 0.5, 0.975), nsplit = 1,
+                                    include_hist = TRUE, ...) {
+  stopifnot("dinarch_project" %in% class(object))
+  stopifnot(
+    is.numeric(probs), length(probs) >= 1,
+    all(probs > 0 & probs < 1)
+  )
+  probs <- sort(unique(probs))
+  if (!is.null(nsplit)) {
+    stopifnot(is.numeric(nsplit), length(nsplit) == 1, nsplit >= 1, nsplit == round(nsplit))
+  }
+  stopifnot(is.logical(include_hist), length(include_hist) == 1, !is.na(include_hist))
 
-  proj <- object[object$historical == FALSE]
-  agg <- proj[, list(
-    mean  = mean(y),
-    lower = stats::quantile(y, probs[1]),
-    upper = stats::quantile(y, probs[2])
-  ), by = c("id", "time")]
-  data.table::setorderv(agg, c("id", "time"))
+  dt <- data.table::as.data.table(object)
+  if (!any(dt$pred)) stop("`object` has no simulated rows (pred == TRUE) to summarize.")
+  if (!include_hist) dt <- dt[dt$pred == TRUE, ]
 
-  structure(list(table = agg, level = level), class = "summary.dinarch_project")
+  pct <- probs * 100
+  pct_chr <- sub("\\.?0+$", "", formatC(pct, format = "f", digits = 6))
+  qnames <- paste0("q", pct_chr)
+  summarise_y <- function(y) {
+    q <- stats::quantile(y, probs = probs, names = FALSE)
+    c(list(mean = mean(y)), stats::setNames(as.list(q), qnames))
+  }
+
+  # One block index per distinct (id, pred, time), computed within each id so
+  # ids with different time ranges are split independently.
+  keys <- unique(dt[, c("id", "pred", "time")])
+  data.table::setorderv(keys, c("id", "pred", "time"))
+  pred_keys <- keys[keys$pred == TRUE, ]
+  if (!is.null(nsplit) && nsplit > 1 && any(pred_keys[, .N, by = "id"][["N"]] <= nsplit)) {
+    message("nsplit >= the number of simulated periods for at least one id; summarizing each of those periods separately.")
+  }
+  pred_keys[, "block" := .dinarch_time_blocks(.N, nsplit), by = "id"]
+  hist_keys <- keys[keys$pred == FALSE, ]
+  if (nrow(hist_keys) > 0L) {
+    hist_keys[, "block" := .dinarch_time_blocks(.N, if (is.null(nsplit)) NULL else 1L), by = "id"]
+    keys <- data.table::rbindlist(list(hist_keys, pred_keys), use.names = TRUE)
+  } else {
+    keys <- pred_keys
+  }
+
+  dt <- merge(dt, keys, by = c("id", "pred", "time"))
+  agg <- dt[, c(
+    list(start = min(.SD[["time"]]), end = max(.SD[["time"]])),
+    summarise_y(.SD[["y"]])
+  ), by = c("id", "pred", "block"), .SDcols = c("time", "y")]
+  agg[, "block" := NULL]
+  data.table::setorderv(agg, c("id", "pred", "start"))
+
+  structure(
+    list(table = agg, probs = probs, nsplit = nsplit, include_hist = include_hist),
+    class = "summary.dinarch_project"
+  )
 }
 
 #' @export
 print.summary.dinarch_project <- function(x, ...) {
-  cat(sprintf("DINARCH projection - %.0f%% simulation-based prediction interval\n", 100 * x$level))
+  cat("DINARCH projection\n")
   cat(strrep("-", 50), "\n", sep = "")
   print(as.data.frame(x$table), row.names = FALSE, digits = 4)
   invisible(x)

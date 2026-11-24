@@ -55,7 +55,10 @@ the simulated window not covered here falls back to the default: the
 last observed row of \code{data} held fixed (out-of-sample) or the real
 historical value (in-sample - lets you re-simulate history under an
 alternative covariate path, e.g. for counterfactual checks; \code{time} is
-\emph{not} required to be after the last observed value for this reason).}
+\emph{not} required to be after the last observed value for this reason).
+With \code{horizon} set, a warning is issued if \code{new_data} ends before the
+last forecast period (later periods revert to the last observed
+covariate values) or has rows after it (ignored).}
 
 \item{new_para}{Optional \code{data.frame}/\code{data.table}, same \verb{(id, time)} shape as \code{new_data}, with columns \code{phi}, \verb{b1, ..., bk}
 (\code{k = object$n_lags}, always \code{b1} even at \code{n_lags = 1} - never bare
@@ -71,7 +74,13 @@ replicate's posterior draw, see \code{use_draw}). A column named the same
 as a raw covariate (e.g. \code{"gdp"}) means "override \code{gdp}'s
 \emph{coefficient}" here, vs. "override \code{gdp}'s \emph{value}" as a \code{new_data}
 column - the two tables are separate, so there's no ambiguity in
-code, just something to keep straight when naming columns.}
+code, just something to keep straight when naming columns. With
+\code{horizon} set, a warning is issued if \code{new_para} ends before the last
+forecast period (later periods revert to the fitted parameters) or has
+rows after it (ignored). An optional \code{sim} column restricts each row
+to that replicate (as produced by \code{dinarch_transition(nsim = ...)})
+and must cover exactly \code{1:nsim}; where such a table overrides every
+parameter, \code{use_draw} has no effect on those periods.}
 
 \item{use_draw}{For Bayesian fits only: \code{NULL} (default) uses the
 posterior mean for every replicate; \code{"random"} samples a fresh
@@ -98,8 +107,8 @@ A \code{data.table} (also classed \code{"dinarch_project"}, so
 \code{\link[=plot.dinarch_project]{plot.dinarch_project()}} works, but otherwise behaves exactly like an
 ordinary \code{data.table} - nothing about the usual \code{data.table} syntax
 changes) with columns \code{id}, \code{time}, \code{sim} (replicate id, \code{1:nsim}),
-\code{historical} (\code{TRUE} for \code{data}'s real observations, \code{FALSE} for
-simulated/projected draws), \code{y}, and the raw covariate columns
+\code{pred} (\code{TRUE} for simulated/projected draws, \code{FALSE} for \code{data}'s
+real observations), \code{y}, and the raw covariate columns
 \code{object$formula} references (whatever values were actually used, so
 the output is self-documenting even when mixing defaults with
 \code{new_data} overrides). \code{data}'s historical rows are repeated once per
